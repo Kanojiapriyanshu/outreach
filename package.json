@@ -1,0 +1,50 @@
+{
+  "name": "fidem-outreach",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma migrate deploy && next build",
+    "start": "next start",
+    "lint": "eslint",
+    "postinstall": "prisma generate",
+    "worker": "tsx scripts/worker.ts",
+    "worker:start": "pm2 start ecosystem.config.js",
+    "worker:stop": "pm2 stop fidem-worker",
+    "worker:logs": "pm2 logs fidem-worker",
+    "worker:status": "pm2 status",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.123.0",
+    "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.3",
+    "dayjs": "^1.11.23",
+    "dotenv": "^17.4.2",
+    "googleapis": "^178.0.0",
+    "headroom-ai": "^0.37.0",
+    "lucide-react": "^1.39.0",
+    "mailparser": "^3.9.19",
+    "next": "16.3.4",
+    "prisma": "^6.19.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tsx": "^4.23.13"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "pm2": "^7.0.4",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^4.1.11"
+  }
+}

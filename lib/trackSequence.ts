@@ -1,0 +1,335 @@
+import { prisma } from "@/lib/prisma";
+import { renderTemplate, findUnresolvedVariables } from "@/lib/templates";
+import { gmailClientFor, sendInitialEmail } from "@/lib/gmail";
+import { isUnderDailyLimit } from "@/lib/quota";
+import { computeNextScheduledAt } from "@/lib/scheduler";
+
+export type RecipientType = "DIRECT" | "AGENCY";
+
+interface BrandInput {
+  name: string;
+  /** The CLIENT brand/product/campaign name referenced inside the email — only differs from
+   * `name` for agency outreach, where `name` is the agency itself. Falls back to `name` when
+   * omitted (the normal direct-to-brand case, where the brand IS the campaign). */
+  campaignName?: string;
+  website?: string;
+  category?: string;
+  budgetRangeText?: string;
+  budgetType?: "FLAT_FEE" | "COMMISSION" | "PRODUCT_ONLY" | "HYBRID" | "UNKNOWN";
+  influencerRangeMin?: number;
+  influencerRangeMax?: number;
+  deliverables?: string;
+  campaignTimeline?: string;
+}
+
+interface ContactInput {
+  outreachType: "BRAND" | "CREATOR";
+  recipientType?: RecipientType;
+  emailAccountId: string;
+  contactEmail: string;
+  contactName: string;
+  brand?: BrandInput;
+  creator?: { name: string; channelName?: string; channelUrl?: string; niche?: string };
+  variables: Record<string, string>;
+}
+
+export interface TrackEmailInput extends ContactInput {
+  threadId: string;
+  initialMessageId: string;
+  subject: string;
+}
+
+export type TrackEmailResult =
+  | { ok: true; sequenceId: string; duplicate: boolean }
+  | { ok: false; error: string };
+
+// These three are always derived from the structured contact/brand/creator fields (see
+// deriveVariables below), so the caller never has to type a brand/creator name twice.
+const AUTO_DERIVED_VARS = new Set(["Contact_Name", "Brand_Or_Campaign_Name", "Creator_Name"]);
+
+/**
+ * Which {Variables} are actually required depends on which template set will be used — the
+ * Direct and Agency variants of the Brand track don't necessarily reference the same ones
+ * (e.g. Agency templates may skip {Target_Audience_Or_Angle} entirely). Rather than a fixed
+ * per-outreachType list, this reads it straight from the templates that will actually render,
+ * so a variable a template doesn't use is never wrongly required.
+ */
+async function requiredVariablesFor(outreachType: "BRAND" | "CREATOR", recipientType: RecipientType): Promise<Set<string>> {
+  const templates = await prisma.template.findMany({
+    where: {
+      outreachType,
+      recipientType: outreachType === "BRAND" ? recipientType : "DIRECT",
+      isActive: true,
+    },
+  });
+
+  const vars = new Set<string>();
+  for (const t of templates) {
+    for (const v of findUnresolvedVariables(`${t.subject}\n${t.body}`)) {
+      if (!AUTO_DERIVED_VARS.has(v)) vars.add(v);
+    }
+  }
+  return vars;
+}
+
+/** Shared prerequisite checks: suppression + the type-specific required variables are present. */
+async function checkPrerequisites(input: ContactInput): Promise<string | null> {
+  if (input.outreachType === "BRAND" && !input.brand?.name) return "Brand name is required";
+  if (input.outreachType === "CREATOR" && !input.creator?.name) return "Creator name is required";
+
+  const requiredVars = await requiredVariablesFor(input.outreachType, input.recipientType ?? "DIRECT");
+  for (const v of requiredVars) {
+    if (!input.variables?.[v]) return `Missing variable {${v}}`;
+  }
+  return null;
+}
+
+/** Merges the free-form template variables with the ones we already know from structured fields. */
+function deriveVariables(input: ContactInput): Record<string, string> {
+  const derived: Record<string, string> = { Contact_Name: input.contactName };
+  if (input.outreachType === "BRAND" && input.brand?.name) {
+    derived.Brand_Or_Campaign_Name = input.brand.campaignName || input.brand.name;
+  }
+  if (input.outreachType === "CREATOR" && input.creator?.name) derived.Creator_Name = input.creator.name;
+  return { ...input.variables, ...derived };
+}
+
+/** Creates the Brand/Creator + Contact row for this outreach, reused by both entry points. */
+async function createContact(input: ContactInput) {
+  if (input.outreachType === "BRAND") {
+    const b = input.brand!;
+    const brand = await prisma.brand.create({
+      data: {
+        name: b.name,
+        website: b.website,
+        category: b.category,
+        isAgency: input.recipientType === "AGENCY",
+        budgetRangeText: b.budgetRangeText,
+        budgetType: b.budgetType ?? "UNKNOWN",
+        influencerRangeMin: b.influencerRangeMin,
+        influencerRangeMax: b.influencerRangeMax,
+        deliverables: b.deliverables,
+        campaignTimeline: b.campaignTimeline,
+      },
+    });
+    return prisma.contact.create({
+      data: { brandId: brand.id, name: input.contactName, email: input.contactEmail.toLowerCase() },
+    });
+  }
+  const creator = await prisma.creator.create({
+    data: {
+      name: input.creator!.name,
+      email: input.contactEmail.toLowerCase(),
+      channelName: input.creator!.channelName,
+      channelUrl: input.creator!.channelUrl,
+      niche: input.creator!.niche,
+    },
+  });
+  return prisma.contact.create({
+    data: { creatorId: creator.id, name: input.contactName, email: input.contactEmail.toLowerCase() },
+  });
+}
+
+/** Creates the sequence + Email 1 message record + first follow-up schedule. Shared tail of both flows. */
+async function finalizeSequence(
+  input: ContactInput & { threadId: string; initialMessageId: string; subject: string; body: string },
+  contactId: string
+) {
+  const recipientType = input.recipientType ?? "DIRECT";
+
+  const sequence = await prisma.outreachSequence.create({
+    data: {
+      outreachType: input.outreachType,
+      recipientType,
+      contactId,
+      emailAccountId: input.emailAccountId,
+      threadId: input.threadId,
+      initialMessageId: input.initialMessageId,
+      currentStep: 0,
+      status: "WAITING_FOR_REPLY",
+      variables: deriveVariables(input),
+    },
+  });
+
+  await prisma.emailMessage.create({
+    data: {
+      sequenceId: sequence.id,
+      providerMessageId: input.initialMessageId,
+      direction: "OUT",
+      subject: input.subject,
+      body: input.body,
+      sentAt: new Date(),
+      status: "SENT",
+    },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      sequenceId: sequence.id,
+      eventType: "SEQUENCE_CREATED",
+      description: `Started tracking ${input.contactEmail}.`,
+    },
+  });
+
+  const settings = await prisma.automationSettings.findFirstOrThrow();
+  const scheduledAt = computeNextScheduledAt(input.outreachType, 1, settings);
+
+  // Template.step 2 = "Follow-Up 1" (step 1 is Email 1) — look up its current active version
+  // so an edited-since-seed template isn't silently skipped over.
+  const followUp1Template = await prisma.template.findFirst({
+    where: { outreachType: input.outreachType, recipientType, step: 2, isActive: true },
+  });
+
+  await prisma.scheduledAction.create({
+    data: {
+      sequenceId: sequence.id,
+      step: 1,
+      scheduledAt,
+      status: "PENDING",
+      templateVersion: followUp1Template?.version ?? 1,
+      actionKey: `${sequence.id}-step-1`,
+    },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      sequenceId: sequence.id,
+      eventType: "FOLLOW_UP_SCHEDULED",
+      description: `Follow-up #1 is set for ${scheduledAt.toLocaleString()}.`,
+    },
+  });
+
+  return sequence.id;
+}
+
+/**
+ * Creates (or returns the existing) OutreachSequence for a manually-sent Email 1.
+ * Used when the user already sent Email 1 themselves from Gmail and is attaching that
+ * existing thread to the automation.
+ */
+export async function trackSequence(input: TrackEmailInput): Promise<TrackEmailResult> {
+  if (!input.outreachType || !input.emailAccountId || !input.threadId || !input.initialMessageId) {
+    return { ok: false, error: "Missing required fields" };
+  }
+
+  const suppressed = await prisma.suppressedContact.findUnique({
+    where: { email: input.contactEmail.toLowerCase() },
+  });
+  if (suppressed) {
+    return { ok: false, error: `${input.contactEmail} is suppressed and cannot be tracked.` };
+  }
+
+  // Duplicate protection (PRD §44)
+  const existing = await prisma.outreachSequence.findUnique({
+    where: { emailAccountId_threadId: { emailAccountId: input.emailAccountId, threadId: input.threadId } },
+  });
+  if (existing) {
+    return { ok: true, sequenceId: existing.id, duplicate: true };
+  }
+
+  const prereqError = await checkPrerequisites(input);
+  if (prereqError) return { ok: false, error: prereqError };
+
+  const contact = await createContact(input);
+  const sequenceId = await finalizeSequence(
+    { ...input, body: "(sent manually — body not captured)" },
+    contact.id
+  );
+
+  return { ok: true, sequenceId, duplicate: false };
+}
+
+export interface ComposeEmailInput extends ContactInput {
+  templateOverrideSubject?: string;
+  templateOverrideBody?: string;
+}
+
+export type ComposeEmailResult =
+  | { ok: true; sequenceId: string }
+  | { ok: false; error: string };
+
+/**
+ * Renders the active Email 1 template, sends it directly through the connected Gmail account,
+ * and creates the sequence from the send result — for when the CRM itself is doing the sending
+ * instead of the user manually composing in Gmail first.
+ */
+export async function composeAndSendInitialEmail(input: ComposeEmailInput): Promise<ComposeEmailResult> {
+  const recipientType = input.recipientType ?? "DIRECT";
+
+  const suppressed = await prisma.suppressedContact.findUnique({
+    where: { email: input.contactEmail.toLowerCase() },
+  });
+  if (suppressed) {
+    return { ok: false, error: `${input.contactEmail} is suppressed and cannot be emailed.` };
+  }
+
+  // Guard against accidentally emailing the same person twice while they already have an
+  // open sequence — attach-existing has thread-based duplicate protection; compose creates a
+  // brand-new thread every time, so this checks by contact identity instead.
+  const activeExisting = await prisma.outreachSequence.findFirst({
+    where: {
+      contact: { email: input.contactEmail.toLowerCase() },
+      status: { notIn: ["REPLIED", "BOUNCED", "UNSUBSCRIBED", "STOPPED", "COMPLETED"] },
+    },
+  });
+  if (activeExisting) {
+    return {
+      ok: false,
+      error: `${input.contactEmail} already has an active sequence (id ${activeExisting.id}). Stop it first if you want to start a new one.`,
+    };
+  }
+
+  const prereqError = await checkPrerequisites(input);
+  if (prereqError) return { ok: false, error: prereqError };
+
+  const emailAccount = await prisma.emailAccount.findUnique({ where: { id: input.emailAccountId } });
+  if (!emailAccount || emailAccount.accessStatus !== "CONNECTED") {
+    return { ok: false, error: "Email account is not connected" };
+  }
+
+  const underLimit = await isUnderDailyLimit(input.emailAccountId, emailAccount.dailySendLimit);
+  if (!underLimit) {
+    return { ok: false, error: `Daily send limit (${emailAccount.dailySendLimit}) reached for ${emailAccount.email}. Try again tomorrow.` };
+  }
+
+  const template = await prisma.template.findFirst({
+    where: { outreachType: input.outreachType, recipientType, step: 1, isActive: true },
+  });
+  if (!template) return { ok: false, error: "No active Email 1 template found for this outreach type" };
+
+  const variables = deriveVariables(input);
+  const subject = input.templateOverrideSubject ?? renderTemplate(template.subject, variables);
+  const body = input.templateOverrideBody ?? renderTemplate(template.body, variables);
+
+  const unresolved = [...findUnresolvedVariables(subject), ...findUnresolvedVariables(body)];
+  if (unresolved.length > 0) {
+    return { ok: false, error: `Unresolved variables: ${unresolved.join(", ")}` };
+  }
+
+  const gmail = await gmailClientFor(input.emailAccountId);
+  let sent;
+  try {
+    sent = await sendInitialEmail(gmail, { to: input.contactEmail, subject, body, fromEmail: emailAccount.email });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? `Gmail send failed: ${e.message}` : "Gmail send failed" };
+  }
+  if (!sent.id || !sent.threadId) {
+    return { ok: false, error: "Gmail did not return a message/thread id" };
+  }
+
+  const contact = await createContact(input);
+  const sequenceId = await finalizeSequence(
+    { ...input, threadId: sent.threadId, initialMessageId: sent.id, subject, body },
+    contact.id
+  );
+
+  await prisma.activityLog.create({
+    data: {
+      sequenceId,
+      eventType: "SEQUENCE_CREATED",
+      description: `Sent the first email to ${input.contactEmail}.`,
+    },
+  });
+
+  return { ok: true, sequenceId };
+}

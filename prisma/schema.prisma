@@ -1,0 +1,318 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OutreachType {
+  BRAND
+  CREATOR
+}
+
+/** Only meaningful for the Brand track — direct-to-brand vs. reaching the brand's agency. */
+enum RecipientType {
+  DIRECT
+  AGENCY
+}
+
+enum BudgetType {
+  FLAT_FEE
+  COMMISSION
+  PRODUCT_ONLY
+  HYBRID
+  UNKNOWN
+}
+
+enum EmailProvider {
+  GMAIL
+  OUTLOOK
+}
+
+enum EmailAccessStatus {
+  CONNECTED
+  NEEDS_REAUTH
+  DISCONNECTED
+}
+
+enum SequenceStatus {
+  NEW
+  INITIAL_EMAIL_DETECTED
+  WAITING_FOR_REPLY
+  FOLLOW_UP_1_SENT
+  FOLLOW_UP_2_SENT
+  FOLLOW_UP_3_SENT
+  REPLIED
+  BOUNCED
+  UNSUBSCRIBED
+  STOPPED
+  PAUSED
+  COMPLETED
+}
+
+/**
+ * The human/business pipeline label shown on the dashboard, matching the team's own tracking
+ * sheet. FIRST_EMAIL_SENT, CREATOR_LIST_REQUESTED, CREATOR_LIST_SENT, CREATOR_SELECTED (when the
+ * reply names/commits to a creator) and NOT_INTERESTED are set automatically by reading the
+ * thread; NEGOTIATION and DEAL — and CREATOR_SELECTED as a manual override/fallback — reflect
+ * judgment calls the team can also set directly on the dashboard.
+ */
+enum PipelineStage {
+  FIRST_EMAIL_SENT
+  CREATOR_LIST_REQUESTED
+  CREATOR_LIST_SENT
+  NEGOTIATION
+  CREATOR_SELECTED
+  NOT_INTERESTED
+  DEAL
+}
+
+/** TEMPLATE = one of the canned Brand/Creator step templates. CREATOR_LIST_NUDGE = a nudge asking
+ * whether they've had a chance to look at the creator list. TEAM_CHECK_NUDGE = a nudge asking
+ * whether they've had a chance to check internally, sent after a non-committal reply.
+ * GENERIC_NUDGE = a content-agnostic fallback for a manual send that doesn't fit either case. */
+enum ScheduledActionKind {
+  TEMPLATE
+  CREATOR_LIST_NUDGE
+  TEAM_CHECK_NUDGE
+  GENERIC_NUDGE
+}
+
+/** Whether an EmailMessage was sent by this system or typed directly in Gmail by the team and
+ * only picked up afterward while scanning the thread. */
+enum MessageSource {
+  SYSTEM
+  MANUAL
+}
+
+enum ScheduledActionStatus {
+  PENDING
+  SENT
+  SKIPPED
+  CANCELLED
+}
+
+enum MessageDirection {
+  OUT
+  IN
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  BOUNCED
+  FAILED
+}
+
+enum ActivityEventType {
+  SEQUENCE_CREATED
+  INITIAL_EMAIL_DETECTED
+  FOLLOW_UP_SCHEDULED
+  REPLY_CHECK_PERFORMED
+  NO_REPLY_FOUND
+  FOLLOW_UP_SENT
+  REPLY_DETECTED
+  AUTO_REPLY_DETECTED
+  BOUNCE_DETECTED
+  UNSUBSCRIBE_DETECTED
+  SEQUENCE_PAUSED
+  SEQUENCE_RESUMED
+  SEQUENCE_STOPPED
+  FOLLOW_UP_SKIPPED
+  FOLLOW_UP_SENT_NOW
+  SEQUENCE_COMPLETED
+  TEMPLATE_EDITED
+  MANUAL_MESSAGE_DETECTED
+  GENERIC_REPLY_DETECTED
+  STAGE_CHANGED
+}
+
+model User {
+  id           String        @id @default(cuid())
+  name         String
+  email        String        @unique
+  passwordHash String?
+  timezone     String        @default("Asia/Kolkata")
+  role         String        @default("admin")
+  createdAt    DateTime      @default(now())
+  emailAccounts EmailAccount[]
+}
+
+model EmailAccount {
+  id              String            @id @default(cuid())
+  userId          String
+  user            User              @relation(fields: [userId], references: [id])
+  provider        EmailProvider     @default(GMAIL)
+  email           String            @unique
+  accessToken     String?           @db.Text
+  refreshToken    String?           @db.Text
+  tokenExpiry     DateTime?
+  accessStatus    EmailAccessStatus @default(DISCONNECTED)
+  timezone        String            @default("Asia/Kolkata")
+  dailySendLimit  Int               @default(450)
+  createdAt       DateTime          @default(now())
+
+  sequences OutreachSequence[]
+}
+
+model Brand {
+  id                  String      @id @default(cuid())
+  name                String
+  website             String?
+  category            String?
+  isAgency            Boolean     @default(false)
+  budgetRangeText     String?
+  budgetType          BudgetType  @default(UNKNOWN)
+  influencerRangeMin  Int?
+  influencerRangeMax  Int?
+  deliverables        String?
+  campaignTimeline    String?
+  notes               String?     @db.Text
+  createdAt           DateTime    @default(now())
+  contacts            Contact[]
+}
+
+model Creator {
+  id          String    @id @default(cuid())
+  name        String
+  email       String?
+  channelName String?
+  channelUrl  String?
+  niche       String?
+  notes       String?   @db.Text
+  createdAt   DateTime  @default(now())
+  contacts    Contact[]
+}
+
+model Contact {
+  id        String   @id @default(cuid())
+  brandId   String?
+  brand     Brand?   @relation(fields: [brandId], references: [id])
+  creatorId String?
+  creator   Creator? @relation(fields: [creatorId], references: [id])
+  name      String
+  email     String
+  createdAt DateTime @default(now())
+
+  sequences OutreachSequence[]
+
+  @@index([email])
+}
+
+model OutreachSequence {
+  id                String         @id @default(cuid())
+  outreachType      OutreachType
+  recipientType     RecipientType  @default(DIRECT)
+  contactId         String
+  contact           Contact        @relation(fields: [contactId], references: [id])
+  emailAccountId    String
+  emailAccount      EmailAccount   @relation(fields: [emailAccountId], references: [id])
+  threadId          String
+  initialMessageId  String
+  currentStep       Int            @default(0)
+  status            SequenceStatus @default(NEW)
+  stage             PipelineStage  @default(FIRST_EMAIL_SENT)
+  lastKnownMsgCount Int            @default(1)
+  variables         Json           @default("{}")
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  scheduledActions ScheduledAction[]
+  messages         EmailMessage[]
+  activityLogs     ActivityLog[]
+
+  @@unique([emailAccountId, threadId])
+}
+
+model ScheduledAction {
+  id               String                 @id @default(cuid())
+  sequenceId       String
+  sequence         OutreachSequence       @relation(fields: [sequenceId], references: [id])
+  step             Int
+  scheduledAt      DateTime
+  status           ScheduledActionStatus  @default(PENDING)
+  kind             ScheduledActionKind    @default(TEMPLATE)
+  templateVersion  Int?
+  actionKey        String                 @unique
+
+  @@index([status, scheduledAt])
+}
+
+model EmailMessage {
+  id                 String            @id @default(cuid())
+  sequenceId         String
+  sequence           OutreachSequence  @relation(fields: [sequenceId], references: [id])
+  providerMessageId  String
+  direction          MessageDirection
+  source             MessageSource     @default(SYSTEM)
+  subject            String
+  body               String            @db.Text
+  sentAt             DateTime
+  status             MessageStatus     @default(SENT)
+
+  @@index([sequenceId])
+}
+
+model Template {
+  id            String        @id @default(cuid())
+  outreachType  OutreachType
+  recipientType RecipientType @default(DIRECT)
+  step          Int
+  name          String
+  subject       String
+  body          String        @db.Text
+  version       Int           @default(1)
+  isActive      Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@unique([outreachType, recipientType, step, version])
+  @@index([outreachType, recipientType, step, isActive])
+}
+
+model ActivityLog {
+  id          String            @id @default(cuid())
+  sequenceId  String?
+  sequence    OutreachSequence? @relation(fields: [sequenceId], references: [id])
+  eventType   ActivityEventType
+  description String
+  timestamp   DateTime          @default(now())
+
+  @@index([sequenceId])
+}
+
+model SuppressedContact {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  reason    String?
+  createdAt DateTime @default(now())
+}
+
+model WorkerHeartbeat {
+  id            String   @id @default(cuid())
+  lastRunAt     DateTime
+  lastRunOk     Boolean  @default(true)
+  lastError     String?  @db.Text
+  actionsChecked Int     @default(0)
+}
+
+model AutomationSettings {
+  id                    String   @id @default(cuid())
+  brandDelayDays1       Int      @default(3)
+  brandDelayDays2       Int      @default(4)
+  brandDelayDays3       Int      @default(5)
+  creatorDelayDays1     Int      @default(2)
+  creatorDelayDays2     Int      @default(3)
+  creatorDelayDays3     Int      @default(4)
+  sendWindowStartHour   Int      @default(7)
+  sendWindowEndHour     Int      @default(10)
+  sendWindowDays        String   @default("MON,TUE,WED,THU,FRI")
+  sendSpacingSecondsMin Int      @default(30)
+  sendSpacingSecondsMax Int      @default(180)
+  /** Days to wait before nudging again after a non-committal reply ("ok, will check and revert"). */
+  nonCommittalDelayDays Int      @default(2)
+  updatedAt             DateTime @updatedAt
+}
