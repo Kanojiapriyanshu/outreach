@@ -1,11 +1,12 @@
 generator client {
-  provider      = "prisma-client"
-  output        = "../app/generated/prisma"
-  // Vercel's build machine and its actual Lambda runtime use different Linux/OpenSSL variants —
-  // "native" alone only bundles the engine binary for whichever OS ran `prisma generate`, which
-  // then goes missing at runtime with "could not locate the Query Engine for runtime
-  // rhel-openssl-3.0.x". Bundling both covers local dev (native) and Vercel's runtime explicitly.
-  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+  provider   = "prisma-client"
+  output     = "../app/generated/prisma"
+  // "library" (the default) still imports @prisma/client/runtime/library, which loads the
+  // native/binary query engine to compile queries even when a driver adapter (lib/prisma.ts)
+  // handles the actual DB I/O — that's why switching to an adapter alone didn't stop Vercel from
+  // trying to load a query-engine binary. "client" removes the engine dependency entirely: no
+  // binary, no OS/OpenSSL-variant matching, nothing to go missing on a different runtime.
+  engineType = "client"
 }
 
 datasource db {
