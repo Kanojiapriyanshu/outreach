@@ -1,43 +1,22 @@
 import "dotenv/config";
-import { runWorkerTick } from "../lib/scheduler";
-import { prisma } from "../lib/prisma";
+import { runTickWithHeartbeat } from "../lib/workerTick";
 
 const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 5 * 60 * 1000);
 
-async function recordHeartbeat(ok: boolean, actionsChecked: number, error?: string) {
-  try {
-    const existing = await prisma.workerHeartbeat.findFirst();
-    const data = { lastRunAt: new Date(), lastRunOk: ok, lastError: error ?? null, actionsChecked };
-    if (existing) {
-      await prisma.workerHeartbeat.update({ where: { id: existing.id }, data });
-    } else {
-      await prisma.workerHeartbeat.create({ data });
-    }
-  } catch (e) {
-    // If even the heartbeat write fails (e.g. DB is briefly unreachable), just log —
-    // this must never be the thing that takes the worker process down.
-    console.error("[worker] failed to record heartbeat:", e);
-  }
-}
-
 async function tick() {
-  const startedAt = new Date().toISOString();
-  try {
-    const { repliesFound, actionsProcessed, replyResults, actionResults } = await runWorkerTick();
-    await recordHeartbeat(true, actionsProcessed);
-    if (repliesFound > 0) {
-      console.log(`[worker ${startedAt}] found ${repliesFound} reply/bounce/unsubscribe event(s):`, replyResults);
-    }
-    if (actionsProcessed > 0) {
-      console.log(`[worker ${startedAt}] processed ${actionsProcessed} action(s):`, actionResults);
-    }
-    if (repliesFound === 0 && actionsProcessed === 0) {
-      console.log(`[worker ${startedAt}] nothing to do.`);
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[worker ${startedAt}] error:`, err);
-    await recordHeartbeat(false, 0, message);
+  const result = await runTickWithHeartbeat();
+  if (!result.ok) {
+    console.error(`[worker ${result.startedAt}] error:`, result.error);
+    return;
+  }
+  if (result.repliesFound > 0) {
+    console.log(`[worker ${result.startedAt}] found ${result.repliesFound} reply/bounce/unsubscribe event(s):`, result.replyResults);
+  }
+  if (result.actionsProcessed > 0) {
+    console.log(`[worker ${result.startedAt}] processed ${result.actionsProcessed} action(s):`, result.actionResults);
+  }
+  if (result.repliesFound === 0 && result.actionsProcessed === 0) {
+    console.log(`[worker ${result.startedAt}] nothing to do.`);
   }
 }
 

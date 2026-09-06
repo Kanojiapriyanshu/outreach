@@ -8,6 +8,9 @@ const PUBLIC_PATHS = [
   "/api/auth/login",
   "/api/auth/google",
   "/api/auth/google/callback",
+  // Not actually "public" — gated by its own CRON_SECRET check inside the route instead of a
+  // session cookie, since the caller is an external scheduler (GitHub Actions), not a browser.
+  "/api/cron/tick",
 ];
 
 export async function middleware(req: NextRequest) {

@@ -1,0 +1,26 @@
+name: Worker tick
+
+# Stands in for a persistent always-on worker process (Render's Background Worker type requires
+# a paid plan) — this pings the app's own /api/cron/tick route on a schedule instead. GitHub
+# Actions cron minimum granularity is 5 minutes, and schedules can slip a few minutes under load;
+# fine for a follow-up scheduler that doesn't need second-level precision.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {} # lets you trigger a tick manually from the Actions tab too
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit the worker tick endpoint
+        run: |
+          status=$(curl -s -o response.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron/tick")
+          echo "HTTP status: $status"
+          cat response.json
+          if [ "$status" -ge 300 ]; then
+            echo "Tick request failed"
+            exit 1
+          fi
