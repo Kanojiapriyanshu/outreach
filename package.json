@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.123.0",
+    "@prisma/adapter-pg": "^6.19.3",
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
     "dayjs": "^1.11.23",
@@ -29,6 +30,7 @@
     "lucide-react": "^1.39.0",
     "mailparser": "^3.9.19",
     "next": "16.3.4",
+    "pg": "^8.23.0",
     "prisma": "^6.19.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -38,6 +40,7 @@
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
