@@ -1,4 +1,5 @@
-const SIGNATURE = `Yash\nGrowth Lead | Fidem Growth\nyash@fidemgrowth.com | fidemgrowth.com`;
+// No hardcoded name/title/contact block — Gmail already appends the sender's own signature
+// below the compose box on send, so baking one into the nudge text just duplicates it.
 
 function fill(body: string, contactName: string): string {
   return body.replace(/\{Contact_Name\}/g, contactName);
@@ -18,8 +19,7 @@ Just checking in — have you had a chance to take a look at the creator list I 
 
 Happy to answer any questions or send over more options if none of them feel like the right fit.
 
-Thanks & Regards,
-${SIGNATURE}`,
+Thanks & Regards,`,
   },
   {
     step: 2,
@@ -29,8 +29,7 @@ Following up again on the creator list — wanted to check if there's any update
 
 If budget is a factor, we're happy to negotiate rates on your behalf to help make a creator work for you.
 
-Thanks & Regards,
-${SIGNATURE}`,
+Thanks & Regards,`,
   },
   {
     step: 3,
@@ -40,8 +39,7 @@ Last check-in from me on the creator list — I don't want to keep bumping this.
 
 If the timing isn't right, no worries at all. Feel free to reach back out whenever it makes sense, or let me know if there's anything I can adjust to help move this forward.
 
-Best regards,
-${SIGNATURE}`,
+Best regards,`,
   },
 ];
 
@@ -59,8 +57,7 @@ Just following up — have you had a chance to check with your team on this?
 
 Let me know if you need anything else from my side to help move it along.
 
-Thanks & Regards,
-${SIGNATURE}`,
+Thanks & Regards,`,
   },
   {
     step: 2,
@@ -70,8 +67,7 @@ Checking back in — any update after connecting with your team?
 
 Happy to jump on a quick call if that's easier than email back-and-forth.
 
-Thanks & Regards,
-${SIGNATURE}`,
+Thanks & Regards,`,
   },
   {
     step: 3,
@@ -81,8 +77,7 @@ Last note from me here — if the timing isn't right internally, that's complete
 
 Feel free to reach back out whenever it makes sense on your end.
 
-Best regards,
-${SIGNATURE}`,
+Best regards,`,
   },
 ];
 
@@ -96,8 +91,7 @@ Just floating this back to the top of your inbox in case it slipped by.
 
 Let me know if you have any thoughts or questions — happy to jump on a quick call too if that's easier.
 
-Thanks & Regards,
-${SIGNATURE}`,
+Thanks & Regards,`,
   },
   {
     step: 2,
@@ -107,8 +101,7 @@ Following up once more on this — no pressure, just want to make sure it didn't
 
 Let me know either way, even a quick note helps me plan on our end.
 
-Thanks & Regards,
-${SIGNATURE}`,
+Thanks & Regards,`,
   },
   {
     step: 3,
@@ -118,8 +111,7 @@ Last bump from me on this one — I don't want to keep filling your inbox.
 
 If the timing isn't right, no worries at all. Feel free to reach back out whenever it makes sense, or just reply "not now" and I'll leave it there for now.
 
-Best regards,
-${SIGNATURE}`,
+Best regards,`,
   },
 ];
 

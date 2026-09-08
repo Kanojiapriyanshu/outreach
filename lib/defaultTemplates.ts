@@ -1,4 +1,6 @@
-const SIGNATURE = `Yash\nGrowth Lead | Fidem Growth\nyash@fidemgrowth.com | fidemgrowth.com`;
+// No hardcoded name/title/contact block — Gmail already appends the sender's own signature
+// below the compose box on send, so baking one into the template text just duplicates it.
+// Bodies end on the sign-off line itself ("Thanks & Regards," / "Best regards,").
 
 export interface DefaultTemplate {
   step: number;
@@ -22,8 +24,7 @@ For each creator, we can share a full media kit detailing audience demographics.
 
 Shall I send over a few creators, audience stats with full media kits, and rates for your team to review?
 
-Thanks & Regards,
-${SIGNATURE}`,
+Thanks & Regards,`,
   },
   {
     step: 2,
@@ -41,8 +42,7 @@ Also, if you're running any other campaigns alongside {Brand_Or_Campaign_Name}, 
 
 Let me know if this is a yes for now or if the timing isn't right; either way, I appreciate a quick reply!
 
-Thanks & Regards,
-${SIGNATURE}`,
+Thanks & Regards,`,
   },
   {
     step: 3,
@@ -56,8 +56,7 @@ We're locking in creator slots for next month's campaign schedules now. If budge
 
 Should I send over a quick shortlist of available creators and rates for you to take a look?
 
-Best regards,
-${SIGNATURE}`,
+Best regards,`,
   },
   {
     step: 4,
@@ -71,8 +70,7 @@ If you ever need pre-vetted US creators in the {Niche_Categories} space down the
 
 Wishing you and the {Brand_Or_Campaign_Name} team the best with your upcoming launches!
 
-Best regards,
-${SIGNATURE}`,
+Best regards,`,
   },
 ];
 
@@ -93,8 +91,7 @@ We handle everything end-to-end—sourcing, vetting, rate negotiation, product s
 
 Would it be worth me sending over a curated shortlist with audience breakdowns, past performance stats, and rates for your team to review for {Brand_Or_Campaign_Name}?
 
-Thanks & Regards,
-${SIGNATURE}`,
+Thanks & Regards,`,
   },
   {
     step: 2,
@@ -110,8 +107,7 @@ If you're also running other campaigns alongside {Brand_Or_Campaign_Name}, happy
 
 Let me know either way, even a quick "not now" helps me plan on our end.
 
-Thanks & Regards,
-${SIGNATURE}`,
+Thanks & Regards,`,
   },
   {
     step: 3,
@@ -125,8 +121,7 @@ We're finalizing creator slots for next month's schedule now. If budget or timin
 
 Want me to send a short list of available {Niche_Categories} creators and rates to look over?
 
-Best regards,
-${SIGNATURE}`,
+Best regards,`,
   },
   {
     step: 4,
@@ -140,8 +135,7 @@ If you or your roster ever need pre-vetted US {Niche_Categories} creators for a 
 
 Wishing your team a strong run with the {Brand_Or_Campaign_Name} launch!
 
-Best regards,
-${SIGNATURE}`,
+Best regards,`,
   },
 ];
 
@@ -158,8 +152,7 @@ We're currently working with a {Niche_Or_Product_Category} brand looking to spon
 
 If you're open to it, just reply with your rate for a {Deliverable_Type} video and we can move fast from there.
 
-Thanks & Regards,
-${SIGNATURE}`,
+Thanks & Regards,`,
   },
   {
     step: 2,
@@ -175,8 +168,7 @@ If you are open to it, even a rough rate for a {Deliverable_Type} would be great
 
 Either way, thanks for your time — appreciate you!
 
-Best Regards,
-${SIGNATURE}`,
+Best Regards,`,
   },
   {
     step: 3,
@@ -190,8 +182,7 @@ We're closing out the creator shortlist for this campaign soon. If you're able t
 
 Either way, thanks for your time!
 
-Thanks & Regards,
-${SIGNATURE}`,
+Thanks & Regards,`,
   },
   {
     step: 4,
@@ -205,7 +196,6 @@ We work on a lot of upcoming {Niche_Or_Product_Category} launches throughout the
 
 Keep up the great content!
 
-Best regards,
-${SIGNATURE}`,
+Best regards,`,
   },
 ];
