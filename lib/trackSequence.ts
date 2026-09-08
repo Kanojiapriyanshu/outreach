@@ -333,3 +333,70 @@ export async function composeAndSendInitialEmail(input: ComposeEmailInput): Prom
 
   return { ok: true, sequenceId };
 }
+
+export type ScheduleInitialEmailResult =
+  | { ok: true; scheduledId: string; scheduledAt: Date }
+  | { ok: false; error: string };
+
+/**
+ * Like composeAndSendInitialEmail, but for a future send time instead of right now — the same
+ * "Gmail schedule send" idea. Runs the same up-front checks (suppression, duplicate active
+ * sequence, required variables) so a doomed send fails immediately with a clear reason instead
+ * of silently failing hours later when the scheduled time arrives; the actual send still
+ * re-validates then too, since state (e.g. suppression) can change in the meantime.
+ */
+export async function scheduleInitialEmail(
+  input: ComposeEmailInput,
+  scheduledAt: Date
+): Promise<ScheduleInitialEmailResult> {
+  const suppressed = await prisma.suppressedContact.findUnique({
+    where: { email: input.contactEmail.toLowerCase() },
+  });
+  if (suppressed) {
+    return { ok: false, error: `${input.contactEmail} is suppressed and cannot be emailed.` };
+  }
+
+  const activeExisting = await prisma.outreachSequence.findFirst({
+    where: {
+      contact: { email: input.contactEmail.toLowerCase() },
+      status: { notIn: ["REPLIED", "BOUNCED", "UNSUBSCRIBED", "STOPPED", "COMPLETED"] },
+    },
+  });
+  if (activeExisting) {
+    return {
+      ok: false,
+      error: `${input.contactEmail} already has an active sequence (id ${activeExisting.id}). Stop it first if you want to start a new one.`,
+    };
+  }
+
+  const prereqError = await checkPrerequisites(input);
+  if (prereqError) return { ok: false, error: prereqError };
+
+  const scheduled = await prisma.scheduledInitialEmail.create({
+    data: { scheduledAt, status: "PENDING", payload: input as object },
+  });
+
+  return { ok: true, scheduledId: scheduled.id, scheduledAt };
+}
+
+/** Sends one due ScheduledInitialEmail through the normal compose-and-send path. */
+export async function processScheduledInitialEmail(scheduledId: string) {
+  const scheduled = await prisma.scheduledInitialEmail.findUnique({ where: { id: scheduledId } });
+  if (!scheduled || scheduled.status !== "PENDING") return { skipped: true };
+
+  const result = await composeAndSendInitialEmail(scheduled.payload as unknown as ComposeEmailInput);
+
+  if (result.ok) {
+    await prisma.scheduledInitialEmail.update({
+      where: { id: scheduled.id },
+      data: { status: "SENT", sentSequenceId: result.sequenceId },
+    });
+    return { sent: true, sequenceId: result.sequenceId };
+  }
+
+  await prisma.scheduledInitialEmail.update({
+    where: { id: scheduled.id },
+    data: { status: "FAILED", error: result.error },
+  });
+  return { sent: false, error: result.error };
+}

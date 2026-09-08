@@ -99,6 +99,7 @@ enum ScheduledActionStatus {
   SENT
   SKIPPED
   CANCELLED
+  FAILED
 }
 
 enum MessageDirection {
@@ -231,6 +232,25 @@ model OutreachSequence {
   activityLogs     ActivityLog[]
 
   @@unique([emailAccountId, threadId])
+}
+
+/**
+ * A "Write & Send" (or bulk) Email 1 that the team scheduled for a future send time instead of
+ * sending immediately — like Gmail's own "Schedule send." Nothing about an OutreachSequence
+ * exists yet at this point (there's no thread to attach to until the email actually goes out),
+ * so the full compose payload is stored as-is and replayed through the normal send path
+ * (composeAndSendInitialEmail) once due.
+ */
+model ScheduledInitialEmail {
+  id             String                @id @default(cuid())
+  scheduledAt    DateTime
+  status         ScheduledActionStatus @default(PENDING)
+  payload        Json
+  sentSequenceId String?
+  error          String?               @db.Text
+  createdAt      DateTime              @default(now())
+
+  @@index([status, scheduledAt])
 }
 
 model ScheduledAction {

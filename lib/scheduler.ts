@@ -14,6 +14,7 @@ import { addBusinessDays, addCalendarDays, clampToSendingWindow, pickRandomSendT
 import { isUnderDailyLimit } from "@/lib/quota";
 import { classifyReply } from "@/lib/replyClassifier";
 import { renderNudge, type NudgeKind } from "@/lib/genericNudgeTemplates";
+import { processScheduledInitialEmail } from "@/lib/trackSequence";
 import type { AutomationSettings, SequenceStatus as PrismaSequenceStatus, PipelineStage } from "@/app/generated/prisma/client";
 
 // Sequences in these statuses/stages are done for good — nothing left to watch for. Everything
@@ -679,14 +680,51 @@ export async function runDueScheduledActions() {
 }
 
 /**
+ * Sends whatever "Write & Send" emails were scheduled for a future time (like Gmail's own
+ * "Schedule send") and are now due. Spaced out the same way runDueScheduledActions is, for the
+ * same reason — a burst of brand-new outreach emails landing at the identical moment looks
+ * automated.
+ */
+export async function runDueInitialEmails() {
+  const due = await prisma.scheduledInitialEmail.findMany({
+    where: { status: "PENDING", scheduledAt: { lte: new Date() } },
+    orderBy: { scheduledAt: "asc" },
+  });
+
+  const settings = await prisma.automationSettings.findFirstOrThrow();
+  const results = [];
+
+  for (let i = 0; i < due.length; i++) {
+    const result = await processScheduledInitialEmail(due[i].id);
+    results.push({ scheduledId: due[i].id, ...result });
+
+    if ("sent" in result && result.sent && i < due.length - 1) {
+      const min = settings.sendSpacingSecondsMin;
+      const max = Math.max(min, settings.sendSpacingSecondsMax);
+      const gapMs = (min + Math.random() * (max - min)) * 1000;
+      await sleep(gapMs);
+    }
+  }
+  return results;
+}
+
+/**
  * The full worker tick: catch replies/manual-sends on every active sequence first (not just ones
- * with a due follow-up), then process whatever follow-ups are actually due. This is what
- * scripts/worker.ts calls on each poll.
+ * with a due follow-up), send whatever scheduled Email 1s are now due, then process whatever
+ * follow-ups are actually due. This is what scripts/worker.ts calls on each poll.
  */
 export async function runWorkerTick() {
   const replyResults = await runContinuousReplyCheck();
+  const initialEmailResults = await runDueInitialEmails();
   const actionResults = await runDueScheduledActions();
-  return { repliesFound: replyResults.length, actionsProcessed: actionResults.length, replyResults, actionResults };
+  return {
+    repliesFound: replyResults.length,
+    initialEmailsSent: initialEmailResults.length,
+    actionsProcessed: actionResults.length,
+    replyResults,
+    initialEmailResults,
+    actionResults,
+  };
 }
 
 export { MAX_FOLLOW_UPS };

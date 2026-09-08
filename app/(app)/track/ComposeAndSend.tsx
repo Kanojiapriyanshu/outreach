@@ -41,6 +41,12 @@ export default function ComposeAndSend({
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sendTiming, setSendTiming] = useState<"now" | "later">("now");
+  const [scheduledAtLocal, setScheduledAtLocal] = useState("");
+  const [scheduledConfirmation, setScheduledConfirmation] = useState<string | null>(null);
+  // Computed once at mount, not on every render — Date.now() is impure and the "earliest you can
+  // pick" only needs to be roughly "now," not updated live to the second.
+  const [minScheduledAt] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16));
 
   useEffect(() => {
     (async () => {
@@ -73,12 +79,14 @@ export default function ComposeAndSend({
   async function send() {
     setSending(true);
     setError(null);
+    setScheduledConfirmation(null);
     try {
       const res = await fetch("/api/sequences/compose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           outreachType,
+          scheduledAt: sendTiming === "later" && scheduledAtLocal ? new Date(scheduledAtLocal).toISOString() : undefined,
           recipientType: outreachType === "BRAND" ? recipientType : undefined,
           emailAccountId,
           contactEmail,
@@ -114,6 +122,10 @@ export default function ComposeAndSend({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to send");
+      if (data.scheduled) {
+        setScheduledConfirmation(`Scheduled — this will send on ${new Date(data.scheduledAt).toLocaleString()}.`);
+        return;
+      }
       router.push(`/dashboard/${data.sequence.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to send");
@@ -123,8 +135,9 @@ export default function ComposeAndSend({
   }
 
   const contactName = outreachType === "BRAND" ? brandDetails.contactName : creatorName;
+  const scheduleTimeMissing = sendTiming === "later" && !scheduledAtLocal;
   const canSend =
-    !sending && !!contactEmail && !!contactName && !!template && connectedAccounts.length > 0;
+    !sending && !!contactEmail && !!contactName && !!template && connectedAccounts.length > 0 && !scheduleTimeMissing;
 
   return (
     <div className="space-y-4">
@@ -206,15 +219,48 @@ export default function ComposeAndSend({
         )}
       </section>
 
+      <section className="card p-5 space-y-3">
+        <h2 className="font-semibold text-sm text-[var(--ink)]">When should this go out?</h2>
+        <div className="flex gap-2">
+          <TimingButton label="Send now" active={sendTiming === "now"} onClick={() => setSendTiming("now")} />
+          <TimingButton label="Schedule for later" active={sendTiming === "later"} onClick={() => setSendTiming("later")} />
+        </div>
+        {sendTiming === "later" && (
+          <div>
+            <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">Date and time</label>
+            <input
+              type="datetime-local"
+              className="input"
+              value={scheduledAtLocal}
+              min={minScheduledAt}
+              onChange={(e) => setScheduledAtLocal(e.target.value)}
+            />
+            <p className="text-xs text-[var(--muted-2)] mt-1.5">
+              Just like Gmail&apos;s schedule send — this email is queued and goes out automatically at the time you pick.
+            </p>
+          </div>
+        )}
+      </section>
+
       <button
         onClick={send}
         disabled={!canSend}
         className="btn-primary inline-flex items-center gap-1.5 px-5 py-2.5 text-sm"
       >
-        <Send size={15} /> {sending ? "Sending…" : "Send This Email"}
+        <Send size={15} />
+        {sending ? (sendTiming === "later" ? "Scheduling…" : "Sending…") : sendTiming === "later" ? "Schedule This Email" : "Send This Email"}
       </button>
       {error && <p className="text-sm" style={{ color: "var(--danger-fg)" }}>{error}</p>}
+      {scheduledConfirmation && <p className="text-sm" style={{ color: "var(--success-fg)" }}>{scheduledConfirmation}</p>}
     </div>
+  );
+}
+
+function TimingButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className={active ? "btn-primary px-4 py-2 text-sm" : "btn-secondary px-4 py-2 text-sm"}>
+      {label}
+    </button>
   );
 }
 

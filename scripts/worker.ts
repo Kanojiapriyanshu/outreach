@@ -12,10 +12,13 @@ async function tick() {
   if (result.repliesFound > 0) {
     console.log(`[worker ${result.startedAt}] found ${result.repliesFound} reply/bounce/unsubscribe event(s):`, result.replyResults);
   }
+  if (result.initialEmailsSent > 0) {
+    console.log(`[worker ${result.startedAt}] sent ${result.initialEmailsSent} scheduled Email 1(s):`, result.initialEmailResults);
+  }
   if (result.actionsProcessed > 0) {
     console.log(`[worker ${result.startedAt}] processed ${result.actionsProcessed} action(s):`, result.actionResults);
   }
-  if (result.repliesFound === 0 && result.actionsProcessed === 0) {
+  if (result.repliesFound === 0 && result.initialEmailsSent === 0 && result.actionsProcessed === 0) {
     console.log(`[worker ${result.startedAt}] nothing to do.`);
   }
 }
