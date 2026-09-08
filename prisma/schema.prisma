@@ -51,6 +51,9 @@ enum SequenceStatus {
   FOLLOW_UP_1_SENT
   FOLLOW_UP_2_SENT
   FOLLOW_UP_3_SENT
+  /** Only reached by the creator-list nudge cadence — a final CEO-voice close-out sent after 3
+   * nudges with no reply. The standard Email 1 -> Follow-up 1/2/3 cadence never reaches this. */
+  FOLLOW_UP_4_SENT
   REPLIED
   BOUNCED
   UNSUBSCRIBED
@@ -224,6 +227,11 @@ model OutreachSequence {
   stage             PipelineStage  @default(FIRST_EMAIL_SENT)
   lastKnownMsgCount Int            @default(1)
   variables         Json           @default("{}")
+  /** Set (and re-set on every later reply) whenever the contact replies after the creator list has
+   * gone out — the dashboard's green "Response Received" indicator for that track. Also settable
+   * by hand from the dashboard as a manual backstop, and cleared automatically when a fresh
+   * creator list goes out for a new round. */
+  creatorListResponseAt DateTime?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 

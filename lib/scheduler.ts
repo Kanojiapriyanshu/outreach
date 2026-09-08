@@ -13,7 +13,7 @@ import { advanceState, MAX_FOLLOW_UPS, type SequenceState } from "@/lib/stateMac
 import { addBusinessDays, addCalendarDays, clampToSendingWindow, pickRandomSendTime } from "@/lib/businessDays";
 import { isUnderDailyLimit } from "@/lib/quota";
 import { classifyReply } from "@/lib/replyClassifier";
-import { renderNudge, type NudgeKind } from "@/lib/genericNudgeTemplates";
+import { renderNudge, maxStepsForNudge, type NudgeKind } from "@/lib/genericNudgeTemplates";
 import { processScheduledInitialEmail } from "@/lib/trackSequence";
 import type { AutomationSettings, SequenceStatus as PrismaSequenceStatus, PipelineStage } from "@/app/generated/prisma/client";
 
@@ -39,6 +39,7 @@ type SequenceWithContact = {
   emailAccountId: string;
   lastKnownMsgCount: number;
   stage: string;
+  creatorListResponseAt: Date | null;
   contact: { name: string; email: string };
 };
 
@@ -68,10 +69,14 @@ async function claimSequence(seq: SequenceWithContact, data: Record<string, unkn
  * identical minute across different threads is an easy "this is automated" tell.
  */
 export function computeNextScheduledAt(outreachType: "BRAND" | "CREATOR", step: number, settings: AutomationSettings): Date {
+  // The creator-list nudge's step 4 (final close-out) isn't in the delay arrays below — it
+  // reuses the same gap as step 3, so it lands at the same "regular interval" as the nudges
+  // before it instead of needing its own setting.
+  const delayIndex = Math.min(step, 3);
   const delayDays =
     outreachType === "BRAND"
-      ? [0, settings.brandDelayDays1, settings.brandDelayDays2, settings.brandDelayDays3][step]
-      : [0, settings.creatorDelayDays1, settings.creatorDelayDays2, settings.creatorDelayDays3][step];
+      ? [0, settings.brandDelayDays1, settings.brandDelayDays2, settings.brandDelayDays3][delayIndex]
+      : [0, settings.creatorDelayDays1, settings.creatorDelayDays2, settings.creatorDelayDays3][delayIndex];
   const target = outreachType === "BRAND" ? addBusinessDays(new Date(), delayDays) : addCalendarDays(new Date(), delayDays);
   return pickRandomSendTime(target, settings);
 }
@@ -91,6 +96,9 @@ async function handleManualOutboundMessage(
     status: "WAITING_FOR_REPLY",
     currentStep: 0,
     lastKnownMsgCount: newMessageCount,
+    // A fresh round of nudges starting means we're waiting on a new response — don't carry over
+    // the "Response Received" marker from whatever round came before this one.
+    creatorListResponseAt: null,
   });
   if (!claimed) return; // another concurrent check already picked up this same message
 
@@ -152,10 +160,12 @@ async function handleManualOutboundMessage(
  * already in flight.
  */
 async function handleNonCommittalReply(seq: SequenceWithContact, from: string, newMessageCount: number) {
+  const creatorListAlreadySent = !PRE_LIST_STAGES.includes(seq.stage);
   const claimed = await claimSequence(seq, {
     status: "WAITING_FOR_REPLY",
     currentStep: 0,
     lastKnownMsgCount: newMessageCount,
+    ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
   });
   if (!claimed) return;
 
@@ -284,6 +294,7 @@ async function checkThreadForTerminalEvent(
         status: "REPLIED",
         stage: "CREATOR_LIST_REQUESTED",
         lastKnownMsgCount: thread.messages.length,
+        ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
       });
       if (!claimed) return { terminal: false, manualSendDetected: false };
       await prisma.$transaction([
@@ -310,6 +321,7 @@ async function checkThreadForTerminalEvent(
         status: "REPLIED",
         stage: "CREATOR_SELECTED",
         lastKnownMsgCount: thread.messages.length,
+        ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
       });
       if (!claimed) return { terminal: false, manualSendDetected: false };
       await prisma.$transaction([
@@ -336,6 +348,7 @@ async function checkThreadForTerminalEvent(
         status: "UNSUBSCRIBED",
         stage: "NOT_INTERESTED",
         lastKnownMsgCount: thread.messages.length,
+        ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
       });
       if (!claimed) return { terminal: false, manualSendDetected: false };
       await prisma.$transaction([
@@ -364,6 +377,7 @@ async function checkThreadForTerminalEvent(
         status: "REPLIED",
         stage: "NOT_INTERESTED",
         lastKnownMsgCount: thread.messages.length,
+        ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
       });
       if (!claimed) return { terminal: false, manualSendDetected: false };
       await prisma.$transaction([
@@ -384,7 +398,11 @@ async function checkThreadForTerminalEvent(
 
     // Genuine, substantive human reply that doesn't fit any of the above — hand off to the team.
     {
-      const claimed = await claimSequence(seq, { status: "REPLIED", lastKnownMsgCount: thread.messages.length });
+      const claimed = await claimSequence(seq, {
+        status: "REPLIED",
+        lastKnownMsgCount: thread.messages.length,
+        ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
+      });
       if (!claimed) return { terminal: false, manualSendDetected: false };
       await prisma.$transaction([
         prisma.scheduledAction.updateMany({
@@ -471,9 +489,10 @@ export async function renderScheduledActionContent(
       where: { sequenceId: seq.id },
       orderBy: { sentAt: "desc" },
     });
+    const nudgeVariables = { ...(seq.variables as Record<string, string>), Contact_Name: seq.contact.name };
     return {
       subject: lastMessage?.subject ?? "",
-      body: renderNudge(action.kind as NudgeKind, action.step, seq.contact.name),
+      body: renderNudge(action.kind as NudgeKind, action.step, nudgeVariables),
       isOverridden: false,
     };
   }
@@ -624,7 +643,8 @@ export async function processScheduledAction(
   });
 
   const state: SequenceState = { status: seq.status as SequenceState["status"], currentStep: seq.currentStep };
-  const next = advanceState(state, "NO_REPLY_ADVANCE");
+  const maxSteps = NUDGE_KINDS.has(action.kind) ? maxStepsForNudge(action.kind as NudgeKind) : MAX_FOLLOW_UPS;
+  const next = advanceState(state, "NO_REPLY_ADVANCE", maxSteps);
 
   await prisma.$transaction([
     prisma.emailMessage.create({
@@ -664,7 +684,14 @@ export async function processScheduledAction(
 
   if (next.status === "COMPLETED") {
     await prisma.activityLog.create({
-      data: { sequenceId: seq.id, eventType: "SEQUENCE_COMPLETED", description: "All 3 follow-ups sent with no reply — wrapped up." },
+      data: {
+        sequenceId: seq.id,
+        eventType: "SEQUENCE_COMPLETED",
+        description:
+          maxSteps > MAX_FOLLOW_UPS
+            ? "All creator-list nudges (including the final close-out) sent with no reply — wrapped up."
+            : "All 3 follow-ups sent with no reply — wrapped up.",
+      },
     });
   } else {
     const settingsForDelay = await prisma.automationSettings.findFirstOrThrow();

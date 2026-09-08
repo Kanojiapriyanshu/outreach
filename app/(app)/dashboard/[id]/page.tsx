@@ -5,6 +5,11 @@ import Badge, { StageBadge } from "@/app/components/Badge";
 import SequenceControls from "./SequenceControls";
 import StageControl from "./StageControl";
 import UpcomingFollowUpPreview from "./UpcomingFollowUpPreview";
+import CreatorListResponseControl from "./CreatorListResponseControl";
+
+// A brand only enters this part of the pipeline once the creator shortlist has actually gone
+// out — mirrors PRE_LIST_STAGES in lib/scheduler.ts.
+const PRE_LIST_STAGES = ["FIRST_EMAIL_SENT", "CREATOR_LIST_REQUESTED"];
 
 export default async function SequenceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -23,6 +28,8 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
   if (!sequence) notFound();
 
   const pending = sequence.scheduledActions.find((a) => a.status === "PENDING");
+  const creatorListSent = !PRE_LIST_STAGES.includes(sequence.stage);
+  const pendingNudge = pending?.kind === "CREATOR_LIST_NUDGE" ? pending : undefined;
 
   const timeline = [
     ...sequence.messages.map((m) => ({
@@ -68,6 +75,30 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
           </p>
         </div>
       </div>
+
+      {creatorListSent && (
+        <div className="card p-5">
+          <h2 className="font-semibold text-sm mb-1 text-[var(--ink)]">Creator List Follow-Ups</h2>
+          <p className="text-xs text-[var(--muted-2)] mb-3.5">
+            Tracks replies to the creator shortlist separately from the initial outreach above — up to 3 nudges plus a
+            final close-out, on the same business-day cadence and sending window.
+          </p>
+          <CreatorListResponseControl
+            sequenceId={sequence.id}
+            respondedAt={sequence.creatorListResponseAt ? sequence.creatorListResponseAt.toISOString() : null}
+          />
+          {pendingNudge && (
+            <p className="text-sm text-[var(--muted)] mt-3">
+              Next nudge: #{pendingNudge.step} of 4 on {pendingNudge.scheduledAt.toLocaleString()}
+            </p>
+          )}
+          {!pendingNudge && sequence.status === "FOLLOW_UP_4_SENT" && (
+            <p className="text-sm text-[var(--muted)] mt-3">
+              Final close-out sent — no more nudges scheduled unless a new creator list goes out.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="card p-5">
         <h2 className="font-semibold text-sm mb-4 text-[var(--ink)]">Timeline</h2>

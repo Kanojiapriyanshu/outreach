@@ -5,6 +5,7 @@ export type SequenceStatus =
   | "FOLLOW_UP_1_SENT"
   | "FOLLOW_UP_2_SENT"
   | "FOLLOW_UP_3_SENT"
+  | "FOLLOW_UP_4_SENT"
   | "REPLIED"
   | "BOUNCED"
   | "UNSUBSCRIBED"
@@ -36,8 +37,14 @@ export interface SequenceState {
   currentStep: number; // 0 = only Email 1 sent, 1-3 = that follow-up has been sent
 }
 
-/** PRD §47 — pure state transition. Throws if called on a sequence already in a final state. */
-export function advanceState(state: SequenceState, event: SequenceEvent): SequenceState {
+/**
+ * PRD §47 — pure state transition. Throws if called on a sequence already in a final state.
+ *
+ * `maxSteps` defaults to the standard 3-follow-up cadence (Email 1 -> Follow-up 1/2/3). The
+ * creator-list nudge cadence is the one exception — it passes 4 so a final CEO-voice close-out
+ * goes out after the 3rd nudge instead of completing immediately.
+ */
+export function advanceState(state: SequenceState, event: SequenceEvent, maxSteps: number = MAX_FOLLOW_UPS): SequenceState {
   if (FINAL_STATUSES.includes(state.status) && event !== "RESUME") {
     return state; // final states are terminal; no-op
   }
@@ -58,13 +65,12 @@ export function advanceState(state: SequenceState, event: SequenceEvent): Sequen
         ? { ...state, status: stepStatus(state.currentStep) }
         : state;
     case "NO_REPLY_ADVANCE": {
-      // The caller invokes this right after actually sending follow-up #nextStep — so reaching
-      // MAX_FOLLOW_UPS here *is* "the final follow-up just went out with no reply," and should
-      // complete immediately rather than waiting for a hypothetical 4th send that no template
-      // exists for (there is no step-4 follow-up — 3 is the whole cadence).
+      // The caller invokes this right after actually sending follow-up/nudge #nextStep — so
+      // reaching maxSteps here *is* "the final one just went out with no reply," and should
+      // complete immediately rather than waiting for a send that no template exists for.
       const nextStep = state.currentStep + 1;
-      if (nextStep >= MAX_FOLLOW_UPS) {
-        return { currentStep: MAX_FOLLOW_UPS, status: "COMPLETED" };
+      if (nextStep >= maxSteps) {
+        return { currentStep: maxSteps, status: "COMPLETED" };
       }
       return { currentStep: nextStep, status: stepStatus(nextStep) as SequenceStatus };
     }
@@ -83,6 +89,7 @@ export function isActiveForSending(status: SequenceStatus): boolean {
     status === "WAITING_FOR_REPLY" ||
     status === "FOLLOW_UP_1_SENT" ||
     status === "FOLLOW_UP_2_SENT" ||
-    status === "FOLLOW_UP_3_SENT"
+    status === "FOLLOW_UP_3_SENT" ||
+    status === "FOLLOW_UP_4_SENT"
   );
 }

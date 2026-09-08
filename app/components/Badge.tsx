@@ -19,6 +19,7 @@ const STATUS_LABEL: Record<string, string> = {
   FOLLOW_UP_1_SENT: "Follow-up #1 sent",
   FOLLOW_UP_2_SENT: "Follow-up #2 sent",
   FOLLOW_UP_3_SENT: "Follow-up #3 sent",
+  FOLLOW_UP_4_SENT: "Final close-out sent",
   REPLIED: "Replied",
   BOUNCED: "Bounced",
   UNSUBSCRIBED: "Opted out",

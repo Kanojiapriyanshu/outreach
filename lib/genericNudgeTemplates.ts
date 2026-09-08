@@ -1,23 +1,27 @@
 // No hardcoded name/title/contact block — Gmail already appends the sender's own signature
 // below the compose box on send, so baking one into the nudge text just duplicates it.
 
-function fill(body: string, contactName: string): string {
-  return body.replace(/\{Contact_Name\}/g, contactName);
-}
+import { renderTemplate } from "@/lib/templates";
 
 /**
  * Sent after the team hand-types a message directly into Gmail (typically the creator shortlist)
- * and the brand hasn't replied yet. Asks specifically about the list and offers to negotiate
- * budget on their behalf — not a generic "just bumping this" nudge.
+ * and the brand hasn't replied yet. Steps 1-3 ask specifically about the list and offer to
+ * negotiate budget on their behalf — not a generic "just bumping this" nudge. Step 4 only fires
+ * if there's still been no reply after 3 nudges: a final, no-pressure close-out (not a 4th ask)
+ * that leaves the door open instead of just going silent.
  */
 const CREATOR_LIST_NUDGE_TEMPLATES: { step: number; body: string }[] = [
   {
     step: 1,
     body: `Hi {Contact_Name},
 
-Just checking in — have you had a chance to take a look at the creator list I sent over?
+Hope you're having a great week!
 
-Happy to answer any questions or send over more options if none of them feel like the right fit.
+Just following up to see if you've had a chance to review the creator shortlist we sent over for the {Brand_Or_Campaign_Name}?
+
+As a quick reminder, if you feel any of the creators are a great fit but budget becomes an obstacle, do let us know — we can discuss and negotiate on your behalf to get the pricing closer to your proposal and get things moving.
+
+Let me know if any stand out to your team or if you'd like us to adjust the selection!
 
 Thanks & Regards,`,
   },
@@ -25,21 +29,37 @@ Thanks & Regards,`,
     step: 2,
     body: `Hi {Contact_Name},
 
-Following up again on the creator list — wanted to check if there's any update on your end, or if anything's holding things up.
+Hope you're having a great week!
 
-If budget is a factor, we're happy to negotiate rates on your behalf to help make a creator work for you.
+Just following up on this to see if there are any updates on your end regarding the creator shortlist for the {Brand_Or_Campaign_Name}?
 
-Thanks & Regards,`,
+If you need any assistance selecting creators, reviewing profile metrics, or adjusting the selection to better align with your campaign goals, please let me know — I'd be more than happy to help!
+
+Looking forward to hearing your thoughts.`,
   },
   {
     step: 3,
     body: `Hi {Contact_Name},
 
-Last check-in from me on the creator list — I don't want to keep bumping this.
+Hope you're having a great weekend!
 
-If the timing isn't right, no worries at all. Feel free to reach back out whenever it makes sense, or let me know if there's anything I can adjust to help move this forward.
+Just doing a quick check-in to see if your team has had a chance to review the creator shortlist for the {Brand_Or_Campaign_Name}.
 
-Best regards,`,
+If any creators caught your eye or if you need us to adjust for specific targets, custom deliverables, or price negotiations — let me know so we can lock them in.
+
+Looking forward to hearing your thoughts!
+
+Thanks & Regards,`,
+  },
+  {
+    step: 4,
+    body: `Hi {Contact_Name},
+
+I don't want to keep this sitting in your inbox, so I'll leave it here for now — no more check-ins from my side on the {Brand_Or_Campaign_Name} shortlist unless you'd like one.
+
+If any of the creators we sent are still worth a look, or you'd like a fresh set to match a different budget, timeline, or angle, just reply here and we'll pick it straight back up. And if it's simply not the right time, that's completely fine too — we're always happy to help whenever a new campaign or creator need comes up.
+
+Thanks again for considering us, and talk soon,`,
   },
 ];
 
@@ -123,8 +143,13 @@ const TEMPLATE_SETS = {
 
 export type NudgeKind = keyof typeof TEMPLATE_SETS;
 
-export function renderNudge(kind: NudgeKind, step: number, contactName: string): string {
+/** Only CREATOR_LIST_NUDGE has a 4th, final close-out step — the others stop at 3. */
+export function maxStepsForNudge(kind: NudgeKind): number {
+  return kind === "CREATOR_LIST_NUDGE" ? 4 : 3;
+}
+
+export function renderNudge(kind: NudgeKind, step: number, variables: Record<string, string>): string {
   const set = TEMPLATE_SETS[kind] ?? GENERIC_NUDGE_TEMPLATES;
   const template = set.find((t) => t.step === step) ?? set[set.length - 1];
-  return fill(template.body, contactName);
+  return renderTemplate(template.body, variables);
 }

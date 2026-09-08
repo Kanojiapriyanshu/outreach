@@ -51,6 +51,18 @@ describe("advanceState", () => {
     const state = { status: "WAITING_FOR_REPLY" as const, currentStep: 0 };
     expect(advanceState(state, "RESUME")).toEqual(state);
   });
+
+  it("with a maxSteps override, advances through steps 1-3 then completes right after step 4 — the creator-list nudge's final close-out", () => {
+    let state: SequenceState = { status: "WAITING_FOR_REPLY", currentStep: 0 };
+    for (let i = 1; i < 4; i++) {
+      state = advanceState(state, "NO_REPLY_ADVANCE", 4);
+      expect(state.currentStep).toBe(i);
+      expect(state.status).toBe(i === 4 ? "FOLLOW_UP_4_SENT" : `FOLLOW_UP_${i}_SENT`);
+    }
+    state = advanceState(state, "NO_REPLY_ADVANCE", 4);
+    expect(state.status).toBe("COMPLETED");
+    expect(state.currentStep).toBe(4);
+  });
 });
 
 describe("isActiveForSending", () => {
