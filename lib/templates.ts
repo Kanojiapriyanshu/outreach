@@ -28,27 +28,18 @@ export interface TemplateValidationResult {
   errors: string[];
 }
 
-/** PRD §25 — validates a template before activation/use. */
-export function validateTemplate(
-  subject: string,
-  body: string,
-  outreachType: "BRAND" | "CREATOR"
-): TemplateValidationResult {
+/**
+ * Only checks that there's actually something to send. The team has full freedom to write a
+ * template however they want — using any {tag} they like (or none at all), reusing a tag from
+ * the other track, made-up ones, whatever — nothing here restricts template content to a fixed
+ * variable list. Any {tag} that isn't one this system knows how to fill just renders as-is,
+ * exactly like typing literal curly braces on purpose, and the compose flow's editable draft
+ * lets the team remove or replace it before a real send either way.
+ */
+export function validateTemplate(subject: string, body: string): TemplateValidationResult {
   const errors: string[] = [];
   if (!subject || !subject.trim()) errors.push("Subject is empty.");
   if (!body || !body.trim()) errors.push("Body is empty.");
-
-  const allowed = new Set(variablesForType(outreachType));
-  const used = new Set<string>();
-  for (const match of `${subject}\n${body}`.matchAll(/\{([A-Za-z_]+)\}/g)) {
-    used.add(match[1]);
-  }
-  for (const v of used) {
-    if (!allowed.has(v)) {
-      errors.push(`Variable {${v}} is not supported for ${outreachType} templates.`);
-    }
-  }
-
   return { valid: errors.length === 0, errors };
 }
 

@@ -132,7 +132,7 @@ export default function BulkImport({
   return (
     <div className="space-y-4">
       <section className="card p-5 space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <h2 className="font-semibold text-sm text-[var(--ink)]">
             Upload a List of {outreachType === "BRAND" ? "Brands" : "Creators"}
           </h2>

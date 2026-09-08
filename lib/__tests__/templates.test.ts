@@ -31,22 +31,18 @@ describe("findUnresolvedVariables", () => {
 
 describe("validateTemplate", () => {
   it("rejects empty subject or body", () => {
-    expect(validateTemplate("", "body", "BRAND").valid).toBe(false);
-    expect(validateTemplate("subject", "", "BRAND").valid).toBe(false);
+    expect(validateTemplate("", "body").valid).toBe(false);
+    expect(validateTemplate("subject", "").valid).toBe(false);
   });
 
-  it("rejects a Creator variable used in a Brand template", () => {
-    const result = validateTemplate("Hi {Creator_Name}", "body", "BRAND");
-    expect(result.valid).toBe(false);
-    expect(result.errors[0]).toMatch(/Creator_Name/);
+  it("allows any {tag} — templates aren't restricted to a fixed variable list", () => {
+    const result = validateTemplate("Hi {Creator_Name}", "body mentions {AnythingAtAll}");
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
   });
 
-  it("accepts a valid Brand template using only Brand variables", () => {
-    const result = validateTemplate(
-      "{Brand_Or_Campaign_Name} × Fidem Growth",
-      "Hi {Contact_Name}, {Niche_Categories}",
-      "BRAND"
-    );
+  it("accepts a template with no variables at all", () => {
+    const result = validateTemplate("Just a plain subject", "Just a plain body, no tags here.");
     expect(result.valid).toBe(true);
     expect(result.errors).toEqual([]);
   });

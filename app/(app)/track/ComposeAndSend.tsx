@@ -24,7 +24,6 @@ interface TemplateRow {
 interface DraftState {
   emailAccountIdOverride: string | null;
   contactEmail: string;
-  recipientType: "DIRECT" | "AGENCY";
   brandDetails: BrandDetails;
   creatorName: string;
   channelName: string;
@@ -40,7 +39,6 @@ interface DraftState {
 const EMPTY_DRAFT: DraftState = {
   emailAccountIdOverride: null,
   contactEmail: "",
-  recipientType: "DIRECT",
   brandDetails: EMPTY_BRAND_DETAILS,
   creatorName: "",
   channelName: "",
@@ -69,9 +67,13 @@ function loadDraft(outreachType: "BRAND" | "CREATOR"): DraftState {
 
 export default function ComposeAndSend({
   outreachType,
+  recipientType,
+  onRecipientTypeChange,
   connectedAccounts,
 }: {
   outreachType: "BRAND" | "CREATOR";
+  recipientType: "DIRECT" | "AGENCY";
+  onRecipientTypeChange: (v: "DIRECT" | "AGENCY") => void;
   connectedAccounts: ConnectedAccount[];
 }) {
   const router = useRouter();
@@ -139,7 +141,7 @@ export default function ComposeAndSend({
 
   const template =
     outreachType === "BRAND"
-      ? templates.find((t) => t.step === 1 && t.recipientType === draft.recipientType)
+      ? templates.find((t) => t.step === 1 && t.recipientType === recipientType)
       : templates.find((t) => t.step === 1);
 
   const renderedVars: Record<string, string> =
@@ -147,7 +149,7 @@ export default function ComposeAndSend({
       ? {
           Contact_Name: draft.brandDetails.contactName || "{Contact_Name}",
           Brand_Or_Campaign_Name:
-            (draft.recipientType === "AGENCY" ? draft.brandDetails.campaignName : draft.brandDetails.brandName) ||
+            (recipientType === "AGENCY" ? draft.brandDetails.campaignName : draft.brandDetails.brandName) ||
             "{Brand_Or_Campaign_Name}",
           Niche_Categories: draft.variables.Niche_Categories ?? "{Niche_Categories}",
           Key_Product_Features: draft.variables.Key_Product_Features ?? "{Key_Product_Features}",
@@ -179,7 +181,7 @@ export default function ComposeAndSend({
         body: JSON.stringify({
           outreachType,
           scheduledAt: draft.sendTiming === "later" && draft.scheduledAtLocal ? new Date(draft.scheduledAtLocal).toISOString() : undefined,
-          recipientType: outreachType === "BRAND" ? draft.recipientType : undefined,
+          recipientType: outreachType === "BRAND" ? recipientType : undefined,
           emailAccountId,
           contactEmail: draft.contactEmail,
           contactName,
@@ -191,7 +193,7 @@ export default function ComposeAndSend({
             outreachType === "BRAND"
               ? {
                   name: draft.brandDetails.brandName,
-                  campaignName: draft.recipientType === "AGENCY" ? draft.brandDetails.campaignName : undefined,
+                  campaignName: recipientType === "AGENCY" ? draft.brandDetails.campaignName : undefined,
                   website: draft.brandDetails.website,
                   category: draft.brandDetails.category,
                   budgetRangeText: draft.brandDetails.budgetRangeText,
@@ -280,8 +282,8 @@ export default function ComposeAndSend({
 
         {outreachType === "BRAND" ? (
           <BrandDetailsForm
-            recipientType={draft.recipientType}
-            onRecipientTypeChange={(v) => update("recipientType", v)}
+            recipientType={recipientType}
+            onRecipientTypeChange={onRecipientTypeChange}
             contactEmail={draft.contactEmail}
             onContactEmailChange={(v) => update("contactEmail", v)}
             details={draft.brandDetails}
@@ -291,15 +293,15 @@ export default function ComposeAndSend({
           />
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <TextField label="Their email address" value={draft.contactEmail} onChange={(v) => update("contactEmail", v)} />
               <TextField label="Their name" value={draft.creatorName} onChange={(v) => update("creatorName", v)} />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <TextField label="Channel name (optional)" value={draft.channelName} onChange={(v) => update("channelName", v)} />
               <TextField label="Channel link (optional)" value={draft.channelUrl} onChange={(v) => update("channelUrl", v)} />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {CREATOR_VARIABLES.filter((k) => k !== "Creator_Name").map((key) => (
                 <TextField
                   key={key}

@@ -266,7 +266,7 @@ export default function SettingsPage() {
             <h3 className="text-xs font-medium text-[var(--muted)] mb-2 uppercase tracking-wide">
               Waiting time for brands (working days)
             </h3>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <NumField
                 label="Before 1st follow-up"
                 value={settings.brandDelayDays1}
@@ -288,7 +288,7 @@ export default function SettingsPage() {
             <h3 className="text-xs font-medium text-[var(--muted)] mb-2 uppercase tracking-wide">
               Waiting time for creators (calendar days)
             </h3>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <NumField
                 label="Before 1st follow-up"
                 value={settings.creatorDelayDays1}
@@ -310,7 +310,7 @@ export default function SettingsPage() {
             <h3 className="text-xs font-medium text-[var(--muted)] mb-2 uppercase tracking-wide">
               What hours emails can go out
             </h3>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <NumField
                 label="Start (24-hour clock, e.g. 9 = 9am)"
                 value={settings.sendWindowStartHour}
@@ -331,7 +331,7 @@ export default function SettingsPage() {
               Instead of sending every due follow-up at the exact same moment, we wait a random amount of time
               between each one — it looks more like a real person sending mail, not a robot.
             </p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <NumField
                 label="Shortest wait (seconds)"
                 value={settings.sendSpacingSecondsMin}
@@ -352,7 +352,7 @@ export default function SettingsPage() {
               When a reply doesn&apos;t really say yes or no (&quot;ok, will check and get back to you&quot;), how many
               days before we check in again to ask if they&apos;ve had a chance to check internally?
             </p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <NumField
                 label="Days to wait"
                 value={settings.nonCommittalDelayDays}
@@ -412,7 +412,7 @@ export default function SettingsPage() {
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <input
             className="input"
             placeholder="Their name"

@@ -262,6 +262,10 @@ model ScheduledAction {
   status           ScheduledActionStatus  @default(PENDING)
   kind             ScheduledActionKind    @default(TEMPLATE)
   templateVersion  Int?
+  /** Set when the team edited this specific upcoming send's preview directly — takes over from
+   * the live-rendered template/nudge content when present. Cleared to go back to auto-render. */
+  subjectOverride  String?
+  bodyOverride     String?                @db.Text
   actionKey        String                 @unique
 
   @@index([status, scheduledAt])

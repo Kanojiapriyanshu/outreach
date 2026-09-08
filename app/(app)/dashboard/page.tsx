@@ -42,7 +42,7 @@ export default async function DashboardPage({
 
   return (
     <div className="space-y-7">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Dashboard</h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
@@ -57,7 +57,7 @@ export default async function DashboardPage({
         </Link>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard label="In Progress" value={activeCount} />
         <StatCard label="Due Today" value={dueToday} />
         <StatCard label="Total Contacted" value={sequences.length} />

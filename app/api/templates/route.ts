@@ -29,7 +29,7 @@ export async function PUT(req: NextRequest) {
   const current = await prisma.template.findUnique({ where: { id } });
   if (!current) return NextResponse.json({ error: "Template not found" }, { status: 404 });
 
-  const validation = validateTemplate(subject, body, current.outreachType);
+  const validation = validateTemplate(subject, body);
   if (!validation.valid) {
     return NextResponse.json({ error: validation.errors.join(" ") }, { status: 400 });
   }

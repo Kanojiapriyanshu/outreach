@@ -4,6 +4,7 @@ import { companyOrCreatorName } from "@/lib/display";
 import Badge, { StageBadge } from "@/app/components/Badge";
 import SequenceControls from "./SequenceControls";
 import StageControl from "./StageControl";
+import UpcomingFollowUpPreview from "./UpcomingFollowUpPreview";
 
 export default async function SequenceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -33,16 +34,16 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)] break-words">
             {companyOrCreatorName(sequence.contact)}
           </h1>
-          <p className="text-sm text-[var(--muted)] mt-0.5">
+          <p className="text-sm text-[var(--muted)] mt-0.5 break-words">
             {sequence.contact.name} · {sequence.contact.email} · {sequence.outreachType === "BRAND" ? "Brand" : "Creator"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
           <StageBadge stage={sequence.stage} />
           <Badge status={sequence.status} />
         </div>
@@ -52,9 +53,12 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
         <h2 className="font-semibold text-sm mb-3.5 text-[var(--ink)]">Actions</h2>
         <SequenceControls sequenceId={sequence.id} status={sequence.status} hasPending={!!pending} />
         {pending && (
-          <p className="text-sm text-[var(--muted)] mt-3">
-            Next up: follow-up #{pending.step} on {pending.scheduledAt.toLocaleString()}
-          </p>
+          <>
+            <p className="text-sm text-[var(--muted)] mt-3">
+              Next up: follow-up #{pending.step} on {pending.scheduledAt.toLocaleString()}
+            </p>
+            <UpcomingFollowUpPreview scheduledActionId={pending.id} />
+          </>
         )}
         <div className="mt-4 pt-4" style={{ borderTop: "1px solid var(--border)" }}>
           <StageControl sequenceId={sequence.id} stage={sequence.stage} />

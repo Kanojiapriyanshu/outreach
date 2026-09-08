@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { CREATOR_VARIABLES } from "@/lib/templates";
@@ -22,9 +22,46 @@ interface ConnectedAccount {
   accessStatus: string;
 }
 
+// Everything the "I Already Sent It" tab and the top-level "Who is this for?" choice need to
+// survive a tab switch, navigation away, or a page reload — the same fix applied to Write & Send.
+interface AttachDraft {
+  mode: "compose" | "attach" | "bulk";
+  outreachType: "BRAND" | "CREATOR";
+  recipientType: "DIRECT" | "AGENCY";
+  contactEmail: string;
+  brandDetails: BrandDetails;
+  creatorName: string;
+  channelName: string;
+  channelUrl: string;
+  variables: Record<string, string>;
+}
+
+const ATTACH_DRAFT_KEY = "fidem_track_page_draft";
+const EMPTY_ATTACH_DRAFT: AttachDraft = {
+  mode: "compose",
+  outreachType: "BRAND",
+  recipientType: "DIRECT",
+  contactEmail: "",
+  brandDetails: EMPTY_BRAND_DETAILS,
+  creatorName: "",
+  channelName: "",
+  channelUrl: "",
+  variables: {},
+};
+
+function loadAttachDraft(): AttachDraft {
+  try {
+    const raw = localStorage.getItem(ATTACH_DRAFT_KEY);
+    if (!raw) return EMPTY_ATTACH_DRAFT;
+    return { ...EMPTY_ATTACH_DRAFT, ...JSON.parse(raw) };
+  } catch {
+    return EMPTY_ATTACH_DRAFT;
+  }
+}
+
 export default function TrackPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<"compose" | "attach" | "bulk">("compose");
+  const [mode, setMode] = useState<AttachDraft["mode"]>("compose");
   const [outreachType, setOutreachType] = useState<"BRAND" | "CREATOR">("BRAND");
   const [contactEmail, setContactEmail] = useState("");
   const [recipientType, setRecipientType] = useState<"DIRECT" | "AGENCY">("DIRECT");
@@ -35,6 +72,12 @@ export default function TrackPage() {
   const [emailAccountId, setEmailAccountId] = useState<string | null>(null);
   const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>([]);
   const [selectedThread, setSelectedThread] = useState<ThreadResult | null>(null);
+  const [creatorName, setCreatorName] = useState("");
+  const [channelName, setChannelName] = useState("");
+  const [channelUrl, setChannelUrl] = useState("");
+  const [variables, setVariables] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -46,13 +89,40 @@ export default function TrackPage() {
     })();
   }, []);
 
-  const [creatorName, setCreatorName] = useState("");
-  const [channelName, setChannelName] = useState("");
-  const [channelUrl, setChannelUrl] = useState("");
+  // Restore the saved draft once mounted — localStorage isn't available during SSR, so this can
+  // only happen in the browser, not at render time.
+  const isFirstLoad = useRef(true);
+  useEffect(() => {
+    const d = loadAttachDraft();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMode(d.mode);
+    setOutreachType(d.outreachType);
+    setRecipientType(d.recipientType);
+    setContactEmail(d.contactEmail);
+    setBrandDetails(d.brandDetails);
+    setCreatorName(d.creatorName);
+    setChannelName(d.channelName);
+    setChannelUrl(d.channelUrl);
+    setVariables(d.variables);
+  }, []);
 
-  const [variables, setVariables] = useState<Record<string, string>>({});
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  // Save on every change, skipping the very first tick (that's the restore above, not a real
+  // change) so loading a draft doesn't immediately re-save it.
+  useEffect(() => {
+    if (isFirstLoad.current) {
+      isFirstLoad.current = false;
+      return;
+    }
+    try {
+      localStorage.setItem(
+        ATTACH_DRAFT_KEY,
+        JSON.stringify({ mode, outreachType, recipientType, contactEmail, brandDetails, creatorName, channelName, channelUrl, variables })
+      );
+    } catch {
+      // localStorage can throw in private-browsing/storage-full edge cases — not worth failing
+      // the form over losing draft persistence.
+    }
+  }, [mode, outreachType, recipientType, contactEmail, brandDetails, creatorName, channelName, channelUrl, variables]);
 
   async function searchThreads() {
     setSearchLoading(true);
@@ -128,7 +198,7 @@ export default function TrackPage() {
 
   return (
     <div className="max-w-2xl space-y-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
           <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Start a New Outreach</h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
@@ -137,7 +207,10 @@ export default function TrackPage() {
               : "Already sent the first email from Gmail? Find it below and we'll take over the follow-ups. Nothing gets sent until you finish this form."}
           </p>
         </div>
-        <div className="flex gap-1 p-1 rounded-full shrink-0" style={{ background: "var(--neutral-bg)" }}>
+        <div
+          className="flex gap-1 p-1 rounded-full shrink-0 max-w-full overflow-x-auto"
+          style={{ background: "var(--neutral-bg)", scrollbarWidth: "none" }}
+        >
           <ModeButton active={mode === "compose"} onClick={() => setMode("compose")} label="Write & Send" />
           <ModeButton active={mode === "attach"} onClick={() => setMode("attach")} label="I Already Sent It" />
           <ModeButton active={mode === "bulk"} onClick={() => setMode("bulk")} label="Bulk Upload" />
@@ -146,13 +219,35 @@ export default function TrackPage() {
 
       <section className="card p-5 space-y-3">
         <h2 className="font-semibold text-sm text-[var(--ink)]">1. Who is this for?</h2>
-        <div className="flex gap-2">
-          <RadioButton label="A brand" checked={outreachType === "BRAND"} onClick={() => setOutreachType("BRAND")} />
+        <div className="flex gap-2 flex-wrap">
+          <RadioButton
+            label="A brand, directly"
+            checked={outreachType === "BRAND" && recipientType === "DIRECT"}
+            onClick={() => {
+              setOutreachType("BRAND");
+              setRecipientType("DIRECT");
+            }}
+          />
+          <RadioButton
+            label="An agency (working on a brand's behalf)"
+            checked={outreachType === "BRAND" && recipientType === "AGENCY"}
+            onClick={() => {
+              setOutreachType("BRAND");
+              setRecipientType("AGENCY");
+            }}
+          />
           <RadioButton label="A content creator" checked={outreachType === "CREATOR"} onClick={() => setOutreachType("CREATOR")} />
         </div>
       </section>
 
-      {mode === "compose" && <ComposeAndSend outreachType={outreachType} connectedAccounts={connectedAccounts} />}
+      {mode === "compose" && (
+        <ComposeAndSend
+          outreachType={outreachType}
+          recipientType={recipientType}
+          onRecipientTypeChange={setRecipientType}
+          connectedAccounts={connectedAccounts}
+        />
+      )}
 
       {mode === "bulk" && <BulkImport outreachType={outreachType} connectedAccounts={connectedAccounts} />}
 
@@ -279,7 +374,7 @@ function ModeButton({ active, onClick, label }: { active: boolean; onClick: () =
   return (
     <button
       onClick={onClick}
-      className="px-4 py-1.5 text-sm font-medium rounded-full transition-colors"
+      className="px-4 py-1.5 text-sm font-medium rounded-full transition-colors whitespace-nowrap"
       style={{
         background: active ? "var(--surface)" : "transparent",
         color: active ? "var(--ink)" : "var(--muted)",

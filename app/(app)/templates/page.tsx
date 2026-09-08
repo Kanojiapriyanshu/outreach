@@ -79,14 +79,14 @@ export default function TemplatesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Email Templates</h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
             These are the emails that go out automatically. Brand and creator emails are kept completely separate.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           {track === "BRAND" && (
             <div className="flex gap-1 p-1 rounded-full" style={{ background: "var(--neutral-bg)" }}>
               <SegButton active={recipientType === "DIRECT"} onClick={() => switchRecipientType("DIRECT")} label="Direct" />
@@ -103,7 +103,7 @@ export default function TemplatesPage() {
       {loading ? (
         <p className="text-[var(--muted)] text-sm">Loading…</p>
       ) : (
-        <div className="grid gap-5" style={{ gridTemplateColumns: "260px 1fr" }}>
+        <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-5">
           <div className="card p-2 space-y-1 self-start">
             {list.map((t) => (
               <button
@@ -236,9 +236,9 @@ function TemplateEditor({ template, onSaved }: { template: Template; onSaved: ()
 
   return (
     <div className="card p-5 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h2 className="font-semibold text-[15px] text-[var(--ink)]">{template.name}</h2>
             <span className="text-xs text-[var(--muted-2)]">Version {template.version}</span>
             {dirty && (

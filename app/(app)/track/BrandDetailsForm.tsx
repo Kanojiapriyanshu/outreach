@@ -116,8 +116,10 @@ export default function BrandDetailsForm({
   return (
     <div className="space-y-4">
       <div>
-        <div className="flex items-center justify-between mb-2">
-          <label className="block text-sm font-medium text-[var(--ink)]">Who are you emailing?</label>
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <label className="block text-sm font-medium text-[var(--ink)]">
+            {recipientType === "AGENCY" ? "Agency details" : "Brand details"}
+          </label>
           <button
             type="button"
             onClick={() => setPasteOpen(!pasteOpen)}
@@ -126,18 +128,6 @@ export default function BrandDetailsForm({
           >
             <Sparkles size={13} /> {pasteOpen ? "Hide" : "Got their email already? Paste it to fill this in"}
           </button>
-        </div>
-        <div className="flex gap-2">
-          <RecipientButton
-            label="A brand, directly"
-            active={recipientType === "DIRECT"}
-            onClick={() => onRecipientTypeChange("DIRECT")}
-          />
-          <RecipientButton
-            label="An agency (working on a brand's behalf)"
-            active={recipientType === "AGENCY"}
-            onClick={() => onRecipientTypeChange("AGENCY")}
-          />
         </div>
       </div>
 
@@ -165,11 +155,11 @@ export default function BrandDetailsForm({
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="Their email address" value={contactEmail} onChange={onContactEmailChange} />
         <Field label="Their name" value={details.contactName} onChange={(v) => set("contactName", v)} />
       </div>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Field
           label={recipientType === "AGENCY" ? "Agency's name" : "Brand or campaign name"}
           value={details.brandName}
@@ -190,7 +180,7 @@ export default function BrandDetailsForm({
         </div>
       )}
 
-      <div className={recipientType === "DIRECT" ? "grid grid-cols-3 gap-3" : "grid grid-cols-2 gap-3"}>
+      <div className={recipientType === "DIRECT" ? "grid grid-cols-1 sm:grid-cols-3 gap-3" : "grid grid-cols-1 sm:grid-cols-2 gap-3"}>
         <Field
           label={variableLabel("Niche_Categories")}
           hint={variableHint("Niche_Categories")}
@@ -226,7 +216,7 @@ export default function BrandDetailsForm({
 
       {moreOpen && (
         <div className="space-y-3 rounded-xl p-3" style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Budget or rate" hint="e.g. $500-$1000" value={details.budgetRangeText} onChange={(v) => set("budgetRangeText", v)} />
             <div>
               <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">How they pay</label>
@@ -244,7 +234,7 @@ export default function BrandDetailsForm({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field
               label="Smallest channel size (subscribers)"
               value={details.influencerRangeMin}
@@ -257,25 +247,13 @@ export default function BrandDetailsForm({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="What they want made" hint="e.g. one dedicated review video" value={details.deliverables} onChange={(v) => set("deliverables", v)} />
             <Field label="When the campaign runs" value={details.campaignTimeline} onChange={(v) => set("campaignTimeline", v)} />
           </div>
         </div>
       )}
     </div>
-  );
-}
-
-function RecipientButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={active ? "btn-primary px-3 py-1.5 text-xs" : "btn-secondary px-3 py-1.5 text-xs"}
-    >
-      {label}
-    </button>
   );
 }
 

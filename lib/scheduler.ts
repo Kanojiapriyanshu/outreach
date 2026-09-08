@@ -8,7 +8,7 @@ import {
   looksLikeAutoReply,
 } from "@/lib/gmail";
 import type { gmail_v1 } from "googleapis";
-import { renderTemplate, findUnresolvedVariables } from "@/lib/templates";
+import { renderTemplate } from "@/lib/templates";
 import { advanceState, MAX_FOLLOW_UPS, type SequenceState } from "@/lib/stateMachine";
 import { addBusinessDays, addCalendarDays, clampToSendingWindow, pickRandomSendTime } from "@/lib/businessDays";
 import { isUnderDailyLimit } from "@/lib/quota";
@@ -436,6 +436,71 @@ export async function runContinuousReplyCheck() {
 
 const NUDGE_KINDS = new Set<string>(["CREATOR_LIST_NUDGE", "TEAM_CHECK_NUDGE", "GENERIC_NUDGE"]);
 
+type RenderableAction = {
+  kind: string;
+  step: number;
+  templateVersion: number | null;
+  subjectOverride: string | null;
+  bodyOverride: string | null;
+};
+type RenderableSequence = {
+  id: string;
+  outreachType: "BRAND" | "CREATOR";
+  recipientType: "DIRECT" | "AGENCY";
+  variables: unknown;
+  contact: { name: string };
+};
+
+/**
+ * Computes what a scheduled follow-up/nudge would actually send: the team's own edit if they
+ * saved one for this specific upcoming send (subjectOverride/bodyOverride), otherwise a live
+ * render of whichever template/nudge content currently applies. Shared by the real send
+ * (processScheduledAction) and the dashboard's "preview this follow-up" endpoint, so what's
+ * previewed is always exactly what would go out.
+ */
+export async function renderScheduledActionContent(
+  action: RenderableAction,
+  seq: RenderableSequence
+): Promise<{ subject: string; body: string; templateVersionUsed?: number; isOverridden: boolean } | null> {
+  if (action.subjectOverride != null && action.bodyOverride != null) {
+    return { subject: action.subjectOverride, body: action.bodyOverride, isOverridden: true };
+  }
+
+  if (NUDGE_KINDS.has(action.kind)) {
+    const lastMessage = await prisma.emailMessage.findFirst({
+      where: { sequenceId: seq.id },
+      orderBy: { sentAt: "desc" },
+    });
+    return {
+      subject: lastMessage?.subject ?? "",
+      body: renderNudge(action.kind as NudgeKind, action.step, seq.contact.name),
+      isOverridden: false,
+    };
+  }
+
+  // A scheduled action pinned to a specific template version (PRD §26 — editing a template never
+  // mutates a version already in flight) must still find that exact version even after a newer
+  // edit has deactivated it — `isActive` only matters when nothing specific was pinned, i.e. this
+  // is about to be scheduled fresh and should get whatever's current.
+  const template = await prisma.template.findFirst({
+    where: {
+      outreachType: seq.outreachType,
+      recipientType: seq.recipientType,
+      step: action.step + 1,
+      ...(action.templateVersion != null ? { version: action.templateVersion } : { isActive: true }),
+    },
+  });
+  if (!template) return null;
+
+  const variables = { ...(seq.variables as Record<string, string>), Contact_Name: seq.contact.name };
+  return {
+    subject: renderTemplate(template.subject, variables),
+    body: renderTemplate(template.body, variables),
+    templateVersionUsed: template.version,
+    isOverridden: false,
+  };
+}
+
 /**
  * Runs the full send-protection gate (PRD §45) and, if clear, sends the follow-up (or nudge) for
  * `scheduledActionId`, advances the sequence state machine, and schedules the next action. Used
@@ -530,41 +595,17 @@ export async function processScheduledAction(
     return { skipped: true, reason: "Daily send limit reached; rescheduled" };
   }
 
-  // --- Render the content: a canned step template, or a context-specific nudge for a hand-typed message ---
-  let subject: string;
-  let renderedBody: string;
-  let templateVersionUsed: number | undefined;
-
-  if (NUDGE_KINDS.has(action.kind)) {
-    const lastMessage = await prisma.emailMessage.findFirst({
-      where: { sequenceId: seq.id },
-      orderBy: { sentAt: "desc" },
-    });
-    subject = lastMessage?.subject ?? "";
-    renderedBody = renderNudge(action.kind as NudgeKind, action.step, seq.contact.name);
-  } else {
-    const template = await prisma.template.findFirst({
-      where: {
-        outreachType: seq.outreachType,
-        recipientType: seq.recipientType,
-        step: action.step + 1,
-        version: action.templateVersion ?? undefined,
-        isActive: true,
-      },
-    });
-    if (!template) {
-      return { skipped: true, reason: `No active template for step ${action.step + 1}` };
-    }
-    const variables = { ...(seq.variables as Record<string, string>), Contact_Name: seq.contact.name };
-    subject = renderTemplate(template.subject, variables);
-    renderedBody = renderTemplate(template.body, variables);
-    templateVersionUsed = template.version;
-
-    const unresolved = [...findUnresolvedVariables(subject), ...findUnresolvedVariables(renderedBody)];
-    if (unresolved.length > 0) {
-      return { skipped: true, reason: `Unresolved variables: ${unresolved.join(", ")}` };
-    }
+  // --- Render the content: the team's saved edit for this send if there is one, otherwise a
+  // canned step template or a context-specific nudge for a hand-typed message. No variable is
+  // ever mandatory here — an unfilled or custom {tag} just goes out as literal text, the same
+  // way the compose flow works, rather than blocking the send. ---
+  const rendered = await renderScheduledActionContent(action, seq);
+  if (!rendered) {
+    return { skipped: true, reason: `No active template for step ${action.step + 1}` };
   }
+  const subject = rendered.subject;
+  const renderedBody = rendered.body;
+  const templateVersionUsed = rendered.templateVersionUsed;
 
   const { messageId: rfc822MessageId, references } = await getRfc822MessageId(gmail, seq.initialMessageId);
 
