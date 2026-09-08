@@ -7,21 +7,18 @@ describe("advanceState", () => {
     expect(next).toEqual({ status: "FOLLOW_UP_1_SENT", currentStep: 1 });
   });
 
-  it("advances through all three follow-ups then completes", () => {
+  it("advances through follow-ups 1 and 2, then completes right after follow-up 3 — no 4th send", () => {
     let state: SequenceState = { status: "WAITING_FOR_REPLY", currentStep: 0 };
-    for (let i = 1; i <= MAX_FOLLOW_UPS; i++) {
+    for (let i = 1; i < MAX_FOLLOW_UPS; i++) {
       state = advanceState(state, "NO_REPLY_ADVANCE");
       expect(state.currentStep).toBe(i);
+      expect(state.status).toBe(`FOLLOW_UP_${i}_SENT`);
     }
+    // The MAX_FOLLOW_UPS-th call is the one made right after sending that final follow-up —
+    // there's no template for a 4th send, so this must complete immediately, not wait for one.
     state = advanceState(state, "NO_REPLY_ADVANCE");
     expect(state.status).toBe("COMPLETED");
-  });
-
-  it("never sends a 4th follow-up", () => {
-    let state: SequenceState = { status: "FOLLOW_UP_3_SENT", currentStep: 3 };
-    state = advanceState(state, "NO_REPLY_ADVANCE");
-    expect(state.status).toBe("COMPLETED");
-    expect(state.currentStep).toBe(3);
+    expect(state.currentStep).toBe(MAX_FOLLOW_UPS);
   });
 
   it("REPLY immediately stops the sequence regardless of step", () => {

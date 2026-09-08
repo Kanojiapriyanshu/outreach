@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { addBusinessDays, addCalendarDays, clampToSendingWindow, isWithinSendingWindow } from "../businessDays";
 
-const WINDOW = { sendWindowStartHour: 9, sendWindowEndHour: 17, sendWindowDays: "MON,TUE,WED,THU,FRI" };
+const WINDOW = {
+  sendWindowStartHour: 9,
+  sendWindowStartMinute: 0,
+  sendWindowEndHour: 17,
+  sendWindowEndMinute: 0,
+  sendWindowDays: "MON,TUE,WED,THU,FRI",
+};
 
 describe("addBusinessDays", () => {
   it("skips weekends", () => {

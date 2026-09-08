@@ -58,9 +58,13 @@ export function advanceState(state: SequenceState, event: SequenceEvent): Sequen
         ? { ...state, status: stepStatus(state.currentStep) }
         : state;
     case "NO_REPLY_ADVANCE": {
+      // The caller invokes this right after actually sending follow-up #nextStep — so reaching
+      // MAX_FOLLOW_UPS here *is* "the final follow-up just went out with no reply," and should
+      // complete immediately rather than waiting for a hypothetical 4th send that no template
+      // exists for (there is no step-4 follow-up — 3 is the whole cadence).
       const nextStep = state.currentStep + 1;
-      if (nextStep > MAX_FOLLOW_UPS) {
-        return { ...state, status: "COMPLETED" };
+      if (nextStep >= MAX_FOLLOW_UPS) {
+        return { currentStep: MAX_FOLLOW_UPS, status: "COMPLETED" };
       }
       return { currentStep: nextStep, status: stepStatus(nextStep) as SequenceStatus };
     }

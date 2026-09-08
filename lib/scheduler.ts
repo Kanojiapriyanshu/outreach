@@ -26,7 +26,7 @@ const DEAD_STAGES: PipelineStage[] = ["DEAL", "NOT_INTERESTED"];
 
 // Manual stage overrides the team sets themselves on the dashboard — a message arriving in the
 // thread should never bump the sequence backwards out of one of these into CREATOR_LIST_SENT.
-const MANUAL_OR_TERMINAL_STAGES = ["NEGOTIATION", "CREATOR_SELECTED", "DEAL", "NOT_INTERESTED"];
+export const MANUAL_OR_TERMINAL_STAGES = ["NEGOTIATION", "CREATOR_SELECTED", "DEAL", "NOT_INTERESTED"];
 // Once the pipeline has moved past this point, a reply is being read in the context of "the list
 // has already been sent" (CREATOR_CHOSEN) rather than "are they interested enough to want it"
 // (WANTS_CREATOR_LIST).
@@ -645,6 +645,12 @@ export async function processScheduledAction(
         status: next.status,
         currentStep: next.currentStep,
         lastKnownMsgCount: freshSeq.lastKnownMsgCount + 1,
+        // Silence through all 3 follow-ups reads as "not interested" for the pipeline view too —
+        // unless the team already made a manual call on this one (Negotiation/Creator
+        // Selected/Deal), which should never be overwritten by the automation.
+        ...(next.status === "COMPLETED" && !MANUAL_OR_TERMINAL_STAGES.includes(seq.stage)
+          ? { stage: "NOT_INTERESTED" as const }
+          : {}),
       },
     }),
     prisma.activityLog.create({
@@ -662,7 +668,10 @@ export async function processScheduledAction(
     });
   } else {
     const settingsForDelay = await prisma.automationSettings.findFirstOrThrow();
-    const scheduledAt = computeNextScheduledAt(seq.outreachType, next.currentStep, settingsForDelay);
+    // computeNextScheduledAt's step arg indexes the delay array by the step being SCHEDULED
+    // (1/2/3), not the one just sent — e.g. scheduling follow-up #2 needs brandDelayDays2 (the
+    // gap after follow-up #1), not brandDelayDays1 again.
+    const scheduledAt = computeNextScheduledAt(seq.outreachType, next.currentStep + 1, settingsForDelay);
 
     await prisma.scheduledAction.create({
       data: {

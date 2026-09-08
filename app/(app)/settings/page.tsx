@@ -28,7 +28,9 @@ interface AutomationSettings {
   creatorDelayDays2: number;
   creatorDelayDays3: number;
   sendWindowStartHour: number;
+  sendWindowStartMinute: number;
   sendWindowEndHour: number;
+  sendWindowEndMinute: number;
   sendWindowDays: string;
   sendSpacingSecondsMin: number;
   sendSpacingSecondsMax: number;
@@ -264,43 +266,50 @@ export default function SettingsPage() {
           <h2 className="font-semibold text-sm text-[var(--ink)]">When Follow-Ups Go Out</h2>
           <div>
             <h3 className="text-xs font-medium text-[var(--muted)] mb-2 uppercase tracking-wide">
-              Waiting time for brands (working days)
+              Follow-up gaps for brands (working days — Sat/Sun are skipped)
             </h3>
+            <p className="text-xs text-[var(--muted-2)] mb-2">
+              Each gap counts from the message before it, not from Email 1. Nothing here is fixed — change any of
+              these any time.
+            </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <NumField
-                label="Before 1st follow-up"
+                label="1st follow-up — days after Email 1"
                 value={settings.brandDelayDays1}
                 onChange={(v) => setSettings({ ...settings, brandDelayDays1: v })}
               />
               <NumField
-                label="Before 2nd follow-up"
+                label="2nd follow-up — days after the 1st"
                 value={settings.brandDelayDays2}
                 onChange={(v) => setSettings({ ...settings, brandDelayDays2: v })}
               />
               <NumField
-                label="Before 3rd follow-up"
+                label="3rd follow-up — days after the 2nd"
                 value={settings.brandDelayDays3}
                 onChange={(v) => setSettings({ ...settings, brandDelayDays3: v })}
               />
             </div>
+            <p className="text-xs text-[var(--muted-2)] mt-2">
+              No reply after the 3rd follow-up automatically wraps up the sequence and marks it Not Interested.
+            </p>
           </div>
           <div>
             <h3 className="text-xs font-medium text-[var(--muted)] mb-2 uppercase tracking-wide">
-              Waiting time for creators (calendar days)
+              Follow-up gaps for creators (calendar days)
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <NumField
-                label="Before 1st follow-up"
+                label="1st follow-up — days after Email 1"
                 value={settings.creatorDelayDays1}
                 onChange={(v) => setSettings({ ...settings, creatorDelayDays1: v })}
               />
               <NumField
-                label="Before 2nd follow-up"
+                label="2nd follow-up — days after the 1st"
                 value={settings.creatorDelayDays2}
                 onChange={(v) => setSettings({ ...settings, creatorDelayDays2: v })}
               />
               <NumField
-                label="Before 3rd follow-up"
+                label="3rd follow-up — days after the 2nd"
                 value={settings.creatorDelayDays3}
                 onChange={(v) => setSettings({ ...settings, creatorDelayDays3: v })}
               />
@@ -310,16 +319,22 @@ export default function SettingsPage() {
             <h3 className="text-xs font-medium text-[var(--muted)] mb-2 uppercase tracking-wide">
               What hours emails can go out
             </h3>
+            <p className="text-xs text-[var(--muted-2)] mb-2">
+              Only business days (Mon–Fri) below are used — a follow-up due on a weekend moves to the next Monday
+              automatically.
+            </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <NumField
-                label="Start (24-hour clock, e.g. 9 = 9am)"
-                value={settings.sendWindowStartHour}
-                onChange={(v) => setSettings({ ...settings, sendWindowStartHour: v })}
+              <TimeField
+                label="Start"
+                hour={settings.sendWindowStartHour}
+                minute={settings.sendWindowStartMinute}
+                onChange={(h, m) => setSettings({ ...settings, sendWindowStartHour: h, sendWindowStartMinute: m })}
               />
-              <NumField
-                label="Stop (24-hour clock, e.g. 17 = 5pm)"
-                value={settings.sendWindowEndHour}
-                onChange={(v) => setSettings({ ...settings, sendWindowEndHour: v })}
+              <TimeField
+                label="Stop"
+                hour={settings.sendWindowEndHour}
+                minute={settings.sendWindowEndMinute}
+                onChange={(h, m) => setSettings({ ...settings, sendWindowEndHour: h, sendWindowEndMinute: m })}
               />
             </div>
           </div>
@@ -447,6 +462,35 @@ function NumField({ label, value, onChange }: { label: string; value: number; on
     <div>
       <label className="block text-xs text-[var(--muted-2)] mb-1.5">{label}</label>
       <input type="number" className="input" value={value} onChange={(e) => onChange(Number(e.target.value))} />
+    </div>
+  );
+}
+
+function TimeField({
+  label,
+  hour,
+  minute,
+  onChange,
+}: {
+  label: string;
+  hour: number;
+  minute: number;
+  onChange: (hour: number, minute: number) => void;
+}) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const value = `${pad(hour)}:${pad(minute)}`;
+  return (
+    <div>
+      <label className="block text-xs text-[var(--muted-2)] mb-1.5">{label}</label>
+      <input
+        type="time"
+        className="input"
+        value={value}
+        onChange={(e) => {
+          const [h, m] = e.target.value.split(":").map(Number);
+          if (!Number.isNaN(h) && !Number.isNaN(m)) onChange(h, m);
+        }}
+      />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { advanceState, type SequenceState } from "@/lib/stateMachine";
-import { processScheduledAction, computeNextScheduledAt } from "@/lib/scheduler";
+import { processScheduledAction, computeNextScheduledAt, MANUAL_OR_TERMINAL_STAGES } from "@/lib/scheduler";
 
 type ControlAction = "PAUSE" | "RESUME" | "STOP" | "SKIP" | "SEND_NOW";
 
@@ -58,7 +58,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       await prisma.$transaction([
         prisma.scheduledAction.update({ where: { id: pendingAction.id }, data: { status: "SKIPPED" } }),
-        prisma.outreachSequence.update({ where: { id }, data: { status: next.status, currentStep: next.currentStep } }),
+        prisma.outreachSequence.update({
+          where: { id },
+          data: {
+            status: next.status,
+            currentStep: next.currentStep,
+            ...(next.status === "COMPLETED" && !MANUAL_OR_TERMINAL_STAGES.includes(sequence.stage)
+              ? { stage: "NOT_INTERESTED" as const }
+              : {}),
+          },
+        }),
         prisma.activityLog.create({
           data: { sequenceId: id, eventType: "FOLLOW_UP_SKIPPED", description: `Skipped follow-up #${pendingAction.step}.` },
         }),
@@ -66,7 +75,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       if (next.status !== "COMPLETED") {
         const settings = await prisma.automationSettings.findFirstOrThrow();
-        const scheduledAt = computeNextScheduledAt(sequence.outreachType, next.currentStep, settings);
+        // Index by the step being scheduled (next.currentStep + 1), not the one just skipped —
+        // see the same note in lib/scheduler.ts's processScheduledAction.
+        const scheduledAt = computeNextScheduledAt(sequence.outreachType, next.currentStep + 1, settings);
 
         await prisma.scheduledAction.create({
           data: {

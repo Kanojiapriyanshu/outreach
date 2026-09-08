@@ -331,14 +331,20 @@ model WorkerHeartbeat {
 
 model AutomationSettings {
   id                    String   @id @default(cuid())
-  brandDelayDays1       Int      @default(3)
-  brandDelayDays2       Int      @default(4)
-  brandDelayDays3       Int      @default(5)
-  creatorDelayDays1     Int      @default(2)
-  creatorDelayDays2     Int      @default(3)
-  creatorDelayDays3     Int      @default(4)
-  sendWindowStartHour   Int      @default(7)
-  sendWindowEndHour     Int      @default(10)
+  /** Business days from Email 1 to Follow-up #1 (default: next business day). */
+  brandDelayDays1       Int      @default(1)
+  /** Business days from Follow-up #1 to Follow-up #2. */
+  brandDelayDays2       Int      @default(2)
+  /** Business days from Follow-up #2 to Follow-up #3 — after this, no reply moves the sequence
+   * to Completed and the pipeline stage to Not Interested automatically. */
+  brandDelayDays3       Int      @default(2)
+  creatorDelayDays1     Int      @default(1)
+  creatorDelayDays2     Int      @default(2)
+  creatorDelayDays3     Int      @default(2)
+  sendWindowStartHour   Int      @default(9)
+  sendWindowStartMinute Int      @default(30)
+  sendWindowEndHour     Int      @default(12)
+  sendWindowEndMinute   Int      @default(0)
   sendWindowDays        String   @default("MON,TUE,WED,THU,FRI")
   sendSpacingSecondsMin Int      @default(30)
   sendSpacingSecondsMax Int      @default(180)
