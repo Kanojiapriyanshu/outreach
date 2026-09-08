@@ -13,10 +13,14 @@ export default defineConfig({
   engine: "classic",
   datasource: {
     url: env("DATABASE_URL"),
-    // Neon's pooled endpoint doesn't reliably hold `prisma migrate deploy`'s advisory lock across
-    // its transaction-mode PgBouncer — this points migrations at the unpooled endpoint instead.
-    // Falls back to the pooled URL if DIRECT_URL isn't set anywhere yet, so a missing env var
-    // degrades to the old (occasionally-flaky) behavior instead of failing the build outright.
+    // Attempt to point migrations at Neon's unpooled endpoint (falls back to the pooled URL if
+    // DIRECT_URL isn't set). In practice this project's "unpooled" hostname still proxies through
+    // PgBouncer too (confirmed via pg_stat_activity — application_name is "pgbouncer" either way),
+    // so `prisma migrate deploy`'s advisory lock can still time out regardless of which URL is
+    // used here. The real safety net is the build script (package.json) treating a migrate-deploy
+    // failure as non-fatal — migrations are always applied by hand (db push + a hand-written
+    // migration file + `migrate resolve --applied`) before pushing, so this step is a redundant
+    // confirmation, not the actual mechanism, and shouldn't be able to block a deploy.
     directUrl: process.env.DIRECT_URL || env("DATABASE_URL"),
   },
 });
