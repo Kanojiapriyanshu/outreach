@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { renderTemplate, findUnresolvedVariables } from "@/lib/templates";
+import { renderTemplate, variablesForType } from "@/lib/templates";
 import { gmailClientFor, sendInitialEmail } from "@/lib/gmail";
 import { isUnderDailyLimit } from "@/lib/quota";
 import { computeNextScheduledAt } from "@/lib/scheduler";
@@ -43,55 +43,32 @@ export type TrackEmailResult =
   | { ok: true; sequenceId: string; duplicate: boolean }
   | { ok: false; error: string };
 
-// These three are always derived from the structured contact/brand/creator fields (see
-// deriveVariables below), so the caller never has to type a brand/creator name twice.
-const AUTO_DERIVED_VARS = new Set(["Contact_Name", "Brand_Or_Campaign_Name", "Creator_Name"]);
-
 /**
- * Which {Variables} are actually required depends on which template set will be used — the
- * Direct and Agency variants of the Brand track don't necessarily reference the same ones
- * (e.g. Agency templates may skip {Target_Audience_Or_Angle} entirely). Rather than a fixed
- * per-outreachType list, this reads it straight from the templates that will actually render,
- * so a variable a template doesn't use is never wrongly required.
+ * Only the brand/creator's own name is ever required — it's what the Brand/Creator/Contact
+ * database rows are keyed on, not just template content. Every {Variable} a template references
+ * is genuinely optional: the team can fill in as much or as little as is actually relevant to a
+ * given outreach and send anyway (deriveVariables below fills anything left blank with an empty
+ * string so it never renders as a literal, unreplaced "{Tag}" in the sent email).
  */
-async function requiredVariablesFor(outreachType: "BRAND" | "CREATOR", recipientType: RecipientType): Promise<Set<string>> {
-  const templates = await prisma.template.findMany({
-    where: {
-      outreachType,
-      recipientType: outreachType === "BRAND" ? recipientType : "DIRECT",
-      isActive: true,
-    },
-  });
-
-  const vars = new Set<string>();
-  for (const t of templates) {
-    for (const v of findUnresolvedVariables(`${t.subject}\n${t.body}`)) {
-      if (!AUTO_DERIVED_VARS.has(v)) vars.add(v);
-    }
-  }
-  return vars;
-}
-
-/** Shared prerequisite checks: suppression + the type-specific required variables are present. */
 async function checkPrerequisites(input: ContactInput): Promise<string | null> {
   if (input.outreachType === "BRAND" && !input.brand?.name) return "Brand name is required";
   if (input.outreachType === "CREATOR" && !input.creator?.name) return "Creator name is required";
-
-  const requiredVars = await requiredVariablesFor(input.outreachType, input.recipientType ?? "DIRECT");
-  for (const v of requiredVars) {
-    if (!input.variables?.[v]) return `Missing variable {${v}}`;
-  }
   return null;
 }
 
-/** Merges the free-form template variables with the ones we already know from structured fields. */
+/**
+ * Merges the free-form template variables with the ones we already know from structured fields,
+ * filling in every other variable this outreach type's templates might reference with an empty
+ * string — so a field the team left blank just renders as nothing, never as a stray "{Tag}".
+ */
 function deriveVariables(input: ContactInput): Record<string, string> {
+  const defaults = Object.fromEntries(variablesForType(input.outreachType).map((v) => [v, ""]));
   const derived: Record<string, string> = { Contact_Name: input.contactName };
   if (input.outreachType === "BRAND" && input.brand?.name) {
     derived.Brand_Or_Campaign_Name = input.brand.campaignName || input.brand.name;
   }
   if (input.outreachType === "CREATOR" && input.creator?.name) derived.Creator_Name = input.creator.name;
-  return { ...input.variables, ...derived };
+  return { ...defaults, ...input.variables, ...derived };
 }
 
 /** Creates the Brand/Creator + Contact row for this outreach, reused by both entry points. */
@@ -298,13 +275,11 @@ export async function composeAndSendInitialEmail(input: ComposeEmailInput): Prom
   if (!template) return { ok: false, error: "No active Email 1 template found for this outreach type" };
 
   const variables = deriveVariables(input);
+  // Everything a template might reference already resolves to a real value or an empty string
+  // (see deriveVariables) — a template override the team typed by hand is sent exactly as
+  // written, curly braces and all, if that's what they put there. Nothing here blocks a send.
   const subject = input.templateOverrideSubject ?? renderTemplate(template.subject, variables);
   const body = input.templateOverrideBody ?? renderTemplate(template.body, variables);
-
-  const unresolved = [...findUnresolvedVariables(subject), ...findUnresolvedVariables(body)];
-  if (unresolved.length > 0) {
-    return { ok: false, error: `Unresolved variables: ${unresolved.join(", ")}` };
-  }
 
   const gmail = await gmailClientFor(input.emailAccountId);
   let sent;

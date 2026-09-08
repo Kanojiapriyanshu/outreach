@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Send } from "lucide-react";
+import { Send, RotateCcw, Trash2 } from "lucide-react";
 import { CREATOR_VARIABLES, renderTemplate } from "@/lib/templates";
 import { variableLabel } from "@/lib/friendlyLabels";
 import BrandDetailsForm, { EMPTY_BRAND_DETAILS, type BrandDetails } from "./BrandDetailsForm";
@@ -21,6 +21,52 @@ interface TemplateRow {
   body: string;
 }
 
+interface DraftState {
+  emailAccountIdOverride: string | null;
+  contactEmail: string;
+  recipientType: "DIRECT" | "AGENCY";
+  brandDetails: BrandDetails;
+  creatorName: string;
+  channelName: string;
+  channelUrl: string;
+  variables: Record<string, string>;
+  sendTiming: "now" | "later";
+  scheduledAtLocal: string;
+  subjectDraft: string;
+  bodyDraft: string;
+  contentTouched: boolean;
+}
+
+const EMPTY_DRAFT: DraftState = {
+  emailAccountIdOverride: null,
+  contactEmail: "",
+  recipientType: "DIRECT",
+  brandDetails: EMPTY_BRAND_DETAILS,
+  creatorName: "",
+  channelName: "",
+  channelUrl: "",
+  variables: {},
+  sendTiming: "now",
+  scheduledAtLocal: "",
+  subjectDraft: "",
+  bodyDraft: "",
+  contentTouched: false,
+};
+
+function draftKey(outreachType: "BRAND" | "CREATOR") {
+  return `fidem_compose_draft_${outreachType}`;
+}
+
+function loadDraft(outreachType: "BRAND" | "CREATOR"): DraftState {
+  try {
+    const raw = localStorage.getItem(draftKey(outreachType));
+    if (!raw) return EMPTY_DRAFT;
+    return { ...EMPTY_DRAFT, ...JSON.parse(raw) };
+  } catch {
+    return EMPTY_DRAFT;
+  }
+}
+
 export default function ComposeAndSend({
   outreachType,
   connectedAccounts,
@@ -29,24 +75,59 @@ export default function ComposeAndSend({
   connectedAccounts: ConnectedAccount[];
 }) {
   const router = useRouter();
-  const [emailAccountIdOverride, setEmailAccountIdOverride] = useState<string | null>(null);
-  const emailAccountId = emailAccountIdOverride ?? connectedAccounts[0]?.id ?? "";
-  const [contactEmail, setContactEmail] = useState("");
-  const [recipientType, setRecipientType] = useState<"DIRECT" | "AGENCY">("DIRECT");
-  const [brandDetails, setBrandDetails] = useState<BrandDetails>(EMPTY_BRAND_DETAILS);
-  const [creatorName, setCreatorName] = useState("");
-  const [channelName, setChannelName] = useState("");
-  const [channelUrl, setChannelUrl] = useState("");
-  const [variables, setVariables] = useState<Record<string, string>>({});
+  const [draft, setDraft] = useState<DraftState>(EMPTY_DRAFT);
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sendTiming, setSendTiming] = useState<"now" | "later">("now");
-  const [scheduledAtLocal, setScheduledAtLocal] = useState("");
   const [scheduledConfirmation, setScheduledConfirmation] = useState<string | null>(null);
   // Computed once at mount, not on every render — Date.now() is impure and the "earliest you can
   // pick" only needs to be roughly "now," not updated live to the second.
   const [minScheduledAt] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+
+  const emailAccountId = draft.emailAccountIdOverride ?? connectedAccounts[0]?.id ?? "";
+  const contactName = outreachType === "BRAND" ? draft.brandDetails.contactName : draft.creatorName;
+
+  function update<K extends keyof DraftState>(key: K, value: DraftState[K]) {
+    setDraft((prev) => ({ ...prev, [key]: value }));
+  }
+
+  // Load this outreach type's saved draft (if any) whenever we switch between Brand/Creator, and
+  // on first mount — the draft otherwise survives everything: switching the Track page's other
+  // tabs, navigating away entirely, even closing the browser, until explicitly cleared below.
+  // localStorage isn't available during SSR, so this can only happen once mounted in the browser
+  // — there's no external-store subscription to use instead of an effect here.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDraft(loadDraft(outreachType));
+    setError(null);
+    setScheduledConfirmation(null);
+  }, [outreachType]);
+
+  // Skips the very first save-on-load-tick so loading a draft doesn't immediately re-save it
+  // (harmless either way, but avoids a redundant write on every mount).
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    try {
+      localStorage.setItem(draftKey(outreachType), JSON.stringify(draft));
+    } catch {
+      // localStorage can throw in private-browsing/storage-full edge cases — losing draft
+      // persistence there isn't worth failing the whole form over.
+    }
+  }, [draft, outreachType]);
+
+  function clearDraft() {
+    try {
+      localStorage.removeItem(draftKey(outreachType));
+    } catch {
+      // ignore
+    }
+    setDraft(EMPTY_DRAFT);
+    setScheduledConfirmation(null);
+  }
 
   useEffect(() => {
     (async () => {
@@ -58,23 +139,34 @@ export default function ComposeAndSend({
 
   const template =
     outreachType === "BRAND"
-      ? templates.find((t) => t.step === 1 && t.recipientType === recipientType)
+      ? templates.find((t) => t.step === 1 && t.recipientType === draft.recipientType)
       : templates.find((t) => t.step === 1);
 
-  const previewVars: Record<string, string> =
+  const renderedVars: Record<string, string> =
     outreachType === "BRAND"
       ? {
-          Contact_Name: brandDetails.contactName || "{Contact_Name}",
+          Contact_Name: draft.brandDetails.contactName || "{Contact_Name}",
           Brand_Or_Campaign_Name:
-            (recipientType === "AGENCY" ? brandDetails.campaignName : brandDetails.brandName) ||
+            (draft.recipientType === "AGENCY" ? draft.brandDetails.campaignName : draft.brandDetails.brandName) ||
             "{Brand_Or_Campaign_Name}",
-          Niche_Categories: variables.Niche_Categories ?? "{Niche_Categories}",
-          Key_Product_Features: variables.Key_Product_Features ?? "{Key_Product_Features}",
-          Target_Audience_Or_Angle: variables.Target_Audience_Or_Angle ?? "{Target_Audience_Or_Angle}",
+          Niche_Categories: draft.variables.Niche_Categories ?? "{Niche_Categories}",
+          Key_Product_Features: draft.variables.Key_Product_Features ?? "{Key_Product_Features}",
+          Target_Audience_Or_Angle: draft.variables.Target_Audience_Or_Angle ?? "{Target_Audience_Or_Angle}",
         }
-      : { ...variables, Contact_Name: creatorName || "{Contact_Name}" };
-  const previewSubject = template ? renderTemplate(template.subject, previewVars) : "";
-  const previewBody = template ? renderTemplate(template.body, previewVars) : "";
+      : { ...draft.variables, Contact_Name: draft.creatorName || "{Contact_Name}" };
+  const renderedSubject = template ? renderTemplate(template.subject, renderedVars) : "";
+  const renderedBody = template ? renderTemplate(template.body, renderedVars) : "";
+
+  // The editable subject/body track whatever's typed into the form above — right up until the
+  // team edits the final draft directly, at which point their edit wins and stops getting
+  // overwritten by every keystroke elsewhere. "Reset to template" below un-sticks it. Plain
+  // derived values, not synced via an effect — nothing here reaches outside React.
+  const effectiveSubject = draft.contentTouched ? draft.subjectDraft : renderedSubject;
+  const effectiveBody = draft.contentTouched ? draft.bodyDraft : renderedBody;
+
+  function resetToTemplate() {
+    setDraft((prev) => ({ ...prev, contentTouched: false }));
+  }
 
   async function send() {
     setSending(true);
@@ -86,46 +178,52 @@ export default function ComposeAndSend({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           outreachType,
-          scheduledAt: sendTiming === "later" && scheduledAtLocal ? new Date(scheduledAtLocal).toISOString() : undefined,
-          recipientType: outreachType === "BRAND" ? recipientType : undefined,
+          scheduledAt: draft.sendTiming === "later" && draft.scheduledAtLocal ? new Date(draft.scheduledAtLocal).toISOString() : undefined,
+          recipientType: outreachType === "BRAND" ? draft.recipientType : undefined,
           emailAccountId,
-          contactEmail,
-          contactName: outreachType === "BRAND" ? brandDetails.contactName : creatorName,
+          contactEmail: draft.contactEmail,
+          contactName,
+          // Whatever's currently in the editable draft box is exactly what gets sent — the same
+          // text the team can see and has full freedom to rewrite, trim, or leave as-is.
+          templateOverrideSubject: effectiveSubject,
+          templateOverrideBody: effectiveBody,
           brand:
             outreachType === "BRAND"
               ? {
-                  name: brandDetails.brandName,
-                  campaignName: recipientType === "AGENCY" ? brandDetails.campaignName : undefined,
-                  website: brandDetails.website,
-                  category: brandDetails.category,
-                  budgetRangeText: brandDetails.budgetRangeText,
-                  budgetType: brandDetails.budgetType,
-                  influencerRangeMin: brandDetails.influencerRangeMin ? Number(brandDetails.influencerRangeMin) : undefined,
-                  influencerRangeMax: brandDetails.influencerRangeMax ? Number(brandDetails.influencerRangeMax) : undefined,
-                  deliverables: brandDetails.deliverables,
-                  campaignTimeline: brandDetails.campaignTimeline,
+                  name: draft.brandDetails.brandName,
+                  campaignName: draft.recipientType === "AGENCY" ? draft.brandDetails.campaignName : undefined,
+                  website: draft.brandDetails.website,
+                  category: draft.brandDetails.category,
+                  budgetRangeText: draft.brandDetails.budgetRangeText,
+                  budgetType: draft.brandDetails.budgetType,
+                  influencerRangeMin: draft.brandDetails.influencerRangeMin ? Number(draft.brandDetails.influencerRangeMin) : undefined,
+                  influencerRangeMax: draft.brandDetails.influencerRangeMax ? Number(draft.brandDetails.influencerRangeMax) : undefined,
+                  deliverables: draft.brandDetails.deliverables,
+                  campaignTimeline: draft.brandDetails.campaignTimeline,
                 }
               : undefined,
           creator:
             outreachType === "CREATOR"
-              ? { name: creatorName, channelName, channelUrl, niche: variables.Niche_Or_Product_Category }
+              ? { name: draft.creatorName, channelName: draft.channelName, channelUrl: draft.channelUrl, niche: draft.variables.Niche_Or_Product_Category }
               : undefined,
           variables:
             outreachType === "BRAND"
               ? {
-                  Niche_Categories: variables.Niche_Categories,
-                  Key_Product_Features: variables.Key_Product_Features,
-                  Target_Audience_Or_Angle: variables.Target_Audience_Or_Angle,
+                  Niche_Categories: draft.variables.Niche_Categories,
+                  Key_Product_Features: draft.variables.Key_Product_Features,
+                  Target_Audience_Or_Angle: draft.variables.Target_Audience_Or_Angle,
                 }
-              : variables,
+              : draft.variables,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to send");
       if (data.scheduled) {
         setScheduledConfirmation(`Scheduled — this will send on ${new Date(data.scheduledAt).toLocaleString()}.`);
+        clearDraft();
         return;
       }
+      clearDraft();
       router.push(`/dashboard/${data.sequence.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to send");
@@ -134,21 +232,33 @@ export default function ComposeAndSend({
     }
   }
 
-  const contactName = outreachType === "BRAND" ? brandDetails.contactName : creatorName;
-  const scheduleTimeMissing = sendTiming === "later" && !scheduledAtLocal;
+  const scheduleTimeMissing = draft.sendTiming === "later" && !draft.scheduledAtLocal;
   const canSend =
-    !sending && !!contactEmail && !!contactName && !!template && connectedAccounts.length > 0 && !scheduleTimeMissing;
+    !sending && !!draft.contactEmail && !!contactName && !!template && connectedAccounts.length > 0 && !scheduleTimeMissing;
 
   return (
     <div className="space-y-4">
       <section className="card p-5 space-y-3">
-        <h2 className="font-semibold text-sm text-[var(--ink)]">
-          Write & Send the First Email ({outreachType === "BRAND" ? "Brand" : "Creator"})
-        </h2>
-        <p className="text-xs text-[var(--muted)]">
-          This sends right away from your own Gmail — exactly as if you had typed and hit Send yourself. The
-          automatic follow-up reminders kick in right after.
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-sm text-[var(--ink)]">
+              Write & Send the First Email ({outreachType === "BRAND" ? "Brand" : "Creator"})
+            </h2>
+            <p className="text-xs text-[var(--muted)] mt-1">
+              This sends right away from your own Gmail — exactly as if you had typed and hit Send yourself. The
+              automatic follow-up reminders kick in right after. Your progress here is saved automatically, even if
+              you switch tabs or come back later.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={clearDraft}
+            className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-2)] hover:text-[var(--danger-fg)] shrink-0"
+            title="Clear everything typed here and start over"
+          >
+            <Trash2 size={13} /> Clear draft
+          </button>
+        </div>
 
         {connectedAccounts.length === 0 && (
           <p className="text-sm" style={{ color: "var(--danger-fg)" }}>
@@ -158,7 +268,7 @@ export default function ComposeAndSend({
         {connectedAccounts.length > 1 && (
           <div>
             <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">Send from which inbox?</label>
-            <select className="input" value={emailAccountId} onChange={(e) => setEmailAccountIdOverride(e.target.value)}>
+            <select className="input" value={emailAccountId} onChange={(e) => update("emailAccountIdOverride", e.target.value)}>
               {connectedAccounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.email}
@@ -170,32 +280,32 @@ export default function ComposeAndSend({
 
         {outreachType === "BRAND" ? (
           <BrandDetailsForm
-            recipientType={recipientType}
-            onRecipientTypeChange={setRecipientType}
-            contactEmail={contactEmail}
-            onContactEmailChange={setContactEmail}
-            details={brandDetails}
-            onDetailsChange={setBrandDetails}
-            variables={variables}
-            onVariablesChange={setVariables}
+            recipientType={draft.recipientType}
+            onRecipientTypeChange={(v) => update("recipientType", v)}
+            contactEmail={draft.contactEmail}
+            onContactEmailChange={(v) => update("contactEmail", v)}
+            details={draft.brandDetails}
+            onDetailsChange={(v) => update("brandDetails", v)}
+            variables={draft.variables}
+            onVariablesChange={(v) => update("variables", v)}
           />
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3">
-              <TextField label="Their email address" value={contactEmail} onChange={setContactEmail} />
-              <TextField label="Their name" value={creatorName} onChange={setCreatorName} />
+              <TextField label="Their email address" value={draft.contactEmail} onChange={(v) => update("contactEmail", v)} />
+              <TextField label="Their name" value={draft.creatorName} onChange={(v) => update("creatorName", v)} />
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <TextField label="Channel name (optional)" value={channelName} onChange={setChannelName} />
-              <TextField label="Channel link (optional)" value={channelUrl} onChange={setChannelUrl} />
+              <TextField label="Channel name (optional)" value={draft.channelName} onChange={(v) => update("channelName", v)} />
+              <TextField label="Channel link (optional)" value={draft.channelUrl} onChange={(v) => update("channelUrl", v)} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               {CREATOR_VARIABLES.filter((k) => k !== "Creator_Name").map((key) => (
                 <TextField
                   key={key}
                   label={variableLabel(key)}
-                  value={variables[key] ?? ""}
-                  onChange={(v) => setVariables((prev) => ({ ...prev, [key]: v }))}
+                  value={draft.variables[key] ?? ""}
+                  onChange={(v) => update("variables", { ...draft.variables, [key]: v })}
                 />
               ))}
             </div>
@@ -204,17 +314,45 @@ export default function ComposeAndSend({
       </section>
 
       <section className="card p-5 space-y-2">
-        <div className="text-xs font-medium text-[var(--muted-2)] uppercase tracking-wide">
-          What they will actually receive
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-medium text-[var(--muted-2)] uppercase tracking-wide">
+            What they will actually receive — edit freely, nothing here is mandatory
+          </div>
+          {draft.contentTouched && (
+            <button
+              type="button"
+              onClick={resetToTemplate}
+              className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-2)] hover:text-[var(--ink)]"
+              title="Discard your edits and go back to the live template"
+            >
+              <RotateCcw size={12} /> Reset to template
+            </button>
+          )}
         </div>
         {!template ? (
           <p className="text-sm text-[var(--muted)]">
             No template is set up for this yet — set one up on the Templates page first.
           </p>
         ) : (
-          <div className="rounded-xl p-4 text-sm" style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
-            <div className="font-semibold mb-2 text-[var(--ink)]">{previewSubject}</div>
-            <pre className="whitespace-pre-wrap font-sans text-[var(--muted)]">{previewBody}</pre>
+          <div className="space-y-2">
+            <input
+              className="input font-semibold"
+              value={effectiveSubject}
+              onChange={(e) => setDraft((prev) => ({ ...prev, subjectDraft: e.target.value, contentTouched: true }))}
+              placeholder="Subject"
+            />
+            <textarea
+              className="input font-sans"
+              style={{ minHeight: 220, resize: "vertical" }}
+              value={effectiveBody}
+              onChange={(e) => setDraft((prev) => ({ ...prev, bodyDraft: e.target.value, contentTouched: true }))}
+              placeholder="Email body"
+            />
+            <p className="text-xs text-[var(--muted-2)]">
+              This is exactly what gets sent — any {"{tag}"} left in here goes out as literal text, so replace or
+              delete anything you don&apos;t want. Fields above just help pre-fill it; you don&apos;t have to fill
+              in every one of them.
+            </p>
           </div>
         )}
       </section>
@@ -222,18 +360,18 @@ export default function ComposeAndSend({
       <section className="card p-5 space-y-3">
         <h2 className="font-semibold text-sm text-[var(--ink)]">When should this go out?</h2>
         <div className="flex gap-2">
-          <TimingButton label="Send now" active={sendTiming === "now"} onClick={() => setSendTiming("now")} />
-          <TimingButton label="Schedule for later" active={sendTiming === "later"} onClick={() => setSendTiming("later")} />
+          <TimingButton label="Send now" active={draft.sendTiming === "now"} onClick={() => update("sendTiming", "now")} />
+          <TimingButton label="Schedule for later" active={draft.sendTiming === "later"} onClick={() => update("sendTiming", "later")} />
         </div>
-        {sendTiming === "later" && (
+        {draft.sendTiming === "later" && (
           <div>
             <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">Date and time</label>
             <input
               type="datetime-local"
               className="input"
-              value={scheduledAtLocal}
+              value={draft.scheduledAtLocal}
               min={minScheduledAt}
-              onChange={(e) => setScheduledAtLocal(e.target.value)}
+              onChange={(e) => update("scheduledAtLocal", e.target.value)}
             />
             <p className="text-xs text-[var(--muted-2)] mt-1.5">
               Just like Gmail&apos;s schedule send — this email is queued and goes out automatically at the time you pick.
@@ -248,7 +386,13 @@ export default function ComposeAndSend({
         className="btn-primary inline-flex items-center gap-1.5 px-5 py-2.5 text-sm"
       >
         <Send size={15} />
-        {sending ? (sendTiming === "later" ? "Scheduling…" : "Sending…") : sendTiming === "later" ? "Schedule This Email" : "Send This Email"}
+        {sending
+          ? draft.sendTiming === "later"
+            ? "Scheduling…"
+            : "Sending…"
+          : draft.sendTiming === "later"
+            ? "Schedule This Email"
+            : "Send This Email"}
       </button>
       {error && <p className="text-sm" style={{ color: "var(--danger-fg)" }}>{error}</p>}
       {scheduledConfirmation && <p className="text-sm" style={{ color: "var(--success-fg)" }}>{scheduledConfirmation}</p>}
