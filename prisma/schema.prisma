@@ -11,12 +11,12 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  // DATABASE_URL is Neon's pooled (PgBouncer, transaction-mode) endpoint — fine for normal app
-  // queries, but `prisma migrate deploy`'s advisory lock (pg_advisory_lock) needs the lock and
-  // unlock to land on the same physical backend connection, which the pooler doesn't guarantee.
-  // directUrl points migrations at Neon's unpooled endpoint instead, where that always holds.
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  url      = env("DATABASE_URL")
+  // Migrations point at Neon's unpooled endpoint instead (see prisma.config.ts's directUrl) —
+  // DATABASE_URL's pooled connection doesn't reliably hold `prisma migrate deploy`'s advisory
+  // lock across its transaction-mode PgBouncer. Not set here too: unlike prisma.config.ts's
+  // fallback-safe version, a schema-level `directUrl = env("DIRECT_URL")` is validated strictly
+  // at build time and hard-fails if that var isn't set anywhere yet.
 }
 
 enum OutreachType {
