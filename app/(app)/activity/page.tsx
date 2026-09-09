@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { formatDateTime } from "@/lib/formatDate";
 
 export default async function ActivityPage() {
   const logs = await prisma.activityLog.findMany({
@@ -26,7 +27,7 @@ export default async function ActivityPage() {
                 </Link>
               )}
             </div>
-            <div className="text-[var(--muted-2)] text-xs whitespace-nowrap">{log.timestamp.toLocaleString()}</div>
+            <div className="text-[var(--muted-2)] text-xs whitespace-nowrap">{formatDateTime(log.timestamp)}</div>
           </div>
         ))}
       </div>

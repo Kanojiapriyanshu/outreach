@@ -15,6 +15,7 @@ import { isUnderDailyLimit } from "@/lib/quota";
 import { classifyReply } from "@/lib/replyClassifier";
 import { renderNudge, maxStepsForNudge, type NudgeKind } from "@/lib/genericNudgeTemplates";
 import { processScheduledInitialEmail } from "@/lib/trackSequence";
+import { formatDateTime } from "@/lib/formatDate";
 import type { AutomationSettings, SequenceStatus as PrismaSequenceStatus, PipelineStage } from "@/app/generated/prisma/client";
 
 // Sequences in these statuses/stages are done for good — nothing left to watch for. Everything
@@ -140,7 +141,7 @@ async function handleManualOutboundMessage(
       data: {
         sequenceId: seq.id,
         eventType: "MANUAL_MESSAGE_DETECTED",
-        description: `Spotted a message you sent directly from Gmail — restarted the reply timer. We'll nudge about the creator list if there's no reply by ${scheduledAt.toLocaleString()}.`,
+        description: `Spotted a message you sent directly from Gmail — restarted the reply timer. We'll nudge about the creator list if there's no reply by ${formatDateTime(scheduledAt)}.`,
       },
     }),
     ...(stageChanges
@@ -195,7 +196,7 @@ async function handleNonCommittalReply(seq: SequenceWithContact, from: string, n
       data: {
         sequenceId: seq.id,
         eventType: "GENERIC_REPLY_DETECTED",
-        description: `${from} replied but didn't give a real answer — we'll check in again on ${scheduledAt.toLocaleString()} to see if they've checked internally.`,
+        description: `${from} replied but didn't give a real answer — we'll check in again on ${formatDateTime(scheduledAt)} to see if they've checked internally.`,
       },
     }),
   ]);
@@ -608,7 +609,7 @@ export async function processScheduledAction(
       data: {
         sequenceId: seq.id,
         eventType: "FOLLOW_UP_SCHEDULED",
-        description: `Hit today's sending limit (${seq.emailAccount.dailySendLimit}) for ${seq.emailAccount.email} — this follow-up moved to ${tomorrow.toLocaleString()}.`,
+        description: `Hit today's sending limit (${seq.emailAccount.dailySendLimit}) for ${seq.emailAccount.email} — this follow-up moved to ${formatDateTime(tomorrow)}.`,
       },
     });
     return { skipped: true, reason: "Daily send limit reached; rescheduled" };
@@ -715,7 +716,7 @@ export async function processScheduledAction(
       data: {
         sequenceId: seq.id,
         eventType: "FOLLOW_UP_SCHEDULED",
-        description: `Follow-up #${next.currentStep + 1} is set for ${scheduledAt.toLocaleString()}.`,
+        description: `Follow-up #${next.currentStep + 1} is set for ${formatDateTime(scheduledAt)}.`,
       },
     });
   }

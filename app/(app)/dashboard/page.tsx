@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Plus, ExternalLink } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { formatDateOnly } from "@/lib/formatDate";
 import {
   nextActionLabel,
   companyOrCreatorName,
@@ -197,7 +198,7 @@ function BrandTable({ sequences }: { sequences: SequenceRow[] }) {
                 <Badge status={seq.status} />
               </td>
               <td className="px-4 py-3.5 text-[var(--muted-2)] whitespace-nowrap">
-                {seq.updatedAt.toLocaleDateString()}
+                {formatDateOnly(seq.updatedAt)}
               </td>
             </tr>
           );

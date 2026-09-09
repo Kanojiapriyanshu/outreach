@@ -4,6 +4,7 @@ import { gmailClientFor, sendInitialEmail } from "@/lib/gmail";
 import { isUnderDailyLimit } from "@/lib/quota";
 import { computeNextScheduledAt } from "@/lib/scheduler";
 import { MAX_FOLLOW_UPS, type SequenceStatus } from "@/lib/stateMachine";
+import { formatDateTime } from "@/lib/formatDate";
 
 export type RecipientType = "DIRECT" | "AGENCY";
 
@@ -225,8 +226,8 @@ async function finalizeSequence(
       eventType: "FOLLOW_UP_SCHEDULED",
       description:
         manualDate && !isNaN(manualDate.getTime())
-          ? `Follow-up #${nextStep} is set for ${scheduledAt.toLocaleString()} (picked by hand).`
-          : `Follow-up #${nextStep} is set for ${scheduledAt.toLocaleString()}.`,
+          ? `Follow-up #${nextStep} is set for ${formatDateTime(scheduledAt)} (picked by hand).`
+          : `Follow-up #${nextStep} is set for ${formatDateTime(scheduledAt)}.`,
     },
   });
 

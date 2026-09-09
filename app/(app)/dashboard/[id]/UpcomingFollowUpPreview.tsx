@@ -2,12 +2,21 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff, RotateCcw, Save } from "lucide-react";
+import { Eye, EyeOff, RotateCcw, Save, CalendarClock } from "lucide-react";
 
 interface PreviewData {
   subject: string;
   body: string;
   isOverridden: boolean;
+  scheduledAt: string;
+}
+
+/** "YYYY-MM-DDTHH:mm" in the browser's own local time — what <input type="datetime-local"> needs,
+ * and matches how the team already picks times when first attaching a thread (track/page.tsx). */
+function toLocalInputValue(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export default function UpcomingFollowUpPreview({ scheduledActionId }: { scheduledActionId: string }) {
@@ -20,6 +29,9 @@ export default function UpcomingFollowUpPreview({ scheduledActionId }: { schedul
   const [data, setData] = useState<PreviewData | null>(null);
   const [subjectDraft, setSubjectDraft] = useState("");
   const [bodyDraft, setBodyDraft] = useState("");
+  const [scheduleDraft, setScheduleDraft] = useState("");
+  const [rescheduling, setRescheduling] = useState(false);
+  const [rescheduled, setRescheduled] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -32,6 +44,7 @@ export default function UpcomingFollowUpPreview({ scheduledActionId }: { schedul
       setData(json);
       setSubjectDraft(json.subject);
       setBodyDraft(json.body);
+      setScheduleDraft(toLocalInputValue(json.scheduledAt));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't load the preview");
     } finally {
@@ -63,6 +76,29 @@ export default function UpcomingFollowUpPreview({ scheduledActionId }: { schedul
       setError(e instanceof Error ? e.message : "Couldn't save your edit");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function reschedule() {
+    if (!scheduleDraft) return;
+    setRescheduling(true);
+    setError(null);
+    try {
+      const iso = new Date(scheduleDraft).toISOString();
+      const res = await fetch(`/api/scheduled-actions/${scheduledActionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduledAt: iso }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Couldn't reschedule this");
+      setData((prev) => (prev ? { ...prev, scheduledAt: iso } : prev));
+      setRescheduled(true);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't reschedule this");
+    } finally {
+      setRescheduling(false);
     }
   }
 
@@ -122,6 +158,33 @@ export default function UpcomingFollowUpPreview({ scheduledActionId }: { schedul
                   </button>
                 )}
               </div>
+
+              <div className="rounded-lg p-3 space-y-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                <label className="flex items-center gap-1.5 text-xs font-medium text-[var(--muted)]">
+                  <CalendarClock size={13} /> When this goes out
+                </label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    type="datetime-local"
+                    className="input max-w-xs"
+                    value={scheduleDraft}
+                    onChange={(e) => {
+                      setScheduleDraft(e.target.value);
+                      setRescheduled(false);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={reschedule}
+                    disabled={rescheduling || !scheduleDraft || toLocalInputValue(data.scheduledAt) === scheduleDraft}
+                    className="btn-secondary px-3 py-1.5 text-xs"
+                  >
+                    {rescheduling ? "Saving…" : "Reschedule"}
+                  </button>
+                  {rescheduled && <span className="text-xs" style={{ color: "var(--success-fg)" }}>Rescheduled.</span>}
+                </div>
+              </div>
+
               <input
                 className="input font-semibold"
                 value={subjectDraft}

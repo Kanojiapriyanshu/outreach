@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { companyOrCreatorName } from "@/lib/display";
+import { formatDateTime } from "@/lib/formatDate";
 import Badge, { StageBadge } from "@/app/components/Badge";
 import SequenceControls from "./SequenceControls";
 import StageControl from "./StageControl";
@@ -62,7 +63,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
         {pending && (
           <>
             <p className="text-sm text-[var(--muted)] mt-3">
-              Next up: follow-up #{pending.step} on {pending.scheduledAt.toLocaleString()}
+              Next up: follow-up #{pending.step} on {formatDateTime(pending.scheduledAt)}
             </p>
             <UpcomingFollowUpPreview scheduledActionId={pending.id} />
           </>
@@ -89,7 +90,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
           />
           {pendingNudge && (
             <p className="text-sm text-[var(--muted)] mt-3">
-              Next nudge: #{pendingNudge.step} of 4 on {pendingNudge.scheduledAt.toLocaleString()}
+              Next nudge: #{pendingNudge.step} of 4 on {formatDateTime(pendingNudge.scheduledAt)}
             </p>
           )}
           {!pendingNudge && sequence.status === "FOLLOW_UP_4_SENT" && (
@@ -105,7 +106,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
         <ol className="space-y-3.5">
           {timeline.map((event, i) => (
             <li key={i} className="text-sm border-l-2 border-[var(--border)] pl-3.5">
-              <div className="text-[var(--muted-2)] text-xs">{event.time.toLocaleString()}</div>
+              <div className="text-[var(--muted-2)] text-xs">{formatDateTime(event.time)}</div>
               <div className="text-[var(--ink)] mt-0.5">{event.label}</div>
             </li>
           ))}
@@ -119,7 +120,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
             <div key={m.id} className="border border-[var(--border)] rounded-xl p-4">
               <div className="flex justify-between text-xs text-[var(--muted-2)] mb-1.5">
                 <span>{m.direction === "OUT" ? "Sent" : "Received"}</span>
-                <span>{m.sentAt.toLocaleString()}</span>
+                <span>{formatDateTime(m.sentAt)}</span>
               </div>
               <div className="font-medium text-sm mb-1.5 text-[var(--ink)]">{m.subject}</div>
               <pre className="whitespace-pre-wrap text-sm text-[var(--muted)] font-sans">{m.body}</pre>
