@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { CREATOR_VARIABLES } from "@/lib/templates";
 import { variableLabel } from "@/lib/friendlyLabels";
+import { extractNamesFromSubject } from "@/lib/subjectParser";
 import BulkImport from "./BulkImport";
 import ComposeAndSend from "./ComposeAndSend";
 import BrandDetailsForm, { EMPTY_BRAND_DETAILS, type BrandDetails } from "./BrandDetailsForm";
@@ -83,6 +84,8 @@ export default function TrackPage() {
   const [autoFilling, setAutoFilling] = useState(false);
   const [autoFillError, setAutoFillError] = useState<string | null>(null);
   const [startingStep, setStartingStep] = useState(0);
+  const [scheduleMode, setScheduleMode] = useState<"auto" | "manual">("auto");
+  const [manualScheduledAt, setManualScheduledAt] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -169,7 +172,24 @@ export default function TrackPage() {
   // copy-paste it by hand too. BRAND only: the creator flow's fields (name/channel/niche) aren't
   // things this extractor tries to detect.
   async function autoFillFromThread(thread: ThreadResult) {
-    if (outreachType !== "BRAND" || !emailAccountId) return;
+    if (outreachType !== "BRAND") return;
+
+    // The subject follows a fixed convention ("{Brand} × Fidem Growth — ..." for a direct brand,
+    // "Fidem Growth × {Agency} — ... for {Brand}" for an agency) that's far more reliable than
+    // reading the body — it's a template position, not freeform prose. Apply it immediately
+    // (no network round trip needed) so it wins regardless of whether the slower body-based
+    // extraction below finds anything, fails, or guesses a different name from body content.
+    const subjectNames = extractNamesFromSubject(thread.subject);
+    if (subjectNames.brandOrAgencyName) {
+      setBrandDetails((prev) => ({
+        ...prev,
+        brandName: subjectNames.brandOrAgencyName!,
+        campaignName: subjectNames.campaignOrProductName || prev.campaignName,
+      }));
+      if (typeof subjectNames.isAgency === "boolean") setRecipientType(subjectNames.isAgency ? "AGENCY" : "DIRECT");
+    }
+
+    if (!emailAccountId) return;
     setAutoFilling(true);
     setAutoFillError(null);
     try {
@@ -177,7 +197,7 @@ export default function TrackPage() {
       const threadRes = await fetch(`/api/gmail/thread-text?${params.toString()}`);
       const threadData = await threadRes.json();
       if (!threadRes.ok) throw new Error(threadData.error ?? "Couldn't read that thread");
-      if (!threadData.text?.trim()) return; // nothing to extract from — leave fields as-is
+      if (!threadData.text?.trim()) return; // nothing more to extract from — subject-derived fields (if any) still stand
 
       const extractRes = await fetch("/api/extract/email-details", {
         method: "POST",
@@ -191,8 +211,8 @@ export default function TrackPage() {
       setBrandDetails((prev) => ({
         ...prev,
         contactName: d.contactName ?? prev.contactName,
-        brandName: d.brandOrAgencyName ?? prev.brandName,
-        campaignName: d.campaignOrProductName ?? prev.campaignName,
+        brandName: subjectNames.brandOrAgencyName ?? d.brandOrAgencyName ?? prev.brandName,
+        campaignName: subjectNames.campaignOrProductName ?? d.campaignOrProductName ?? prev.campaignName,
         category: d.category ?? prev.category,
         budgetRangeText: d.budgetRangeText ?? prev.budgetRangeText,
         budgetType: d.budgetType ?? prev.budgetType,
@@ -207,7 +227,9 @@ export default function TrackPage() {
         ...(d.keyProductFeatures ? { Key_Product_Features: d.keyProductFeatures } : {}),
         ...(d.targetAudienceOrAngle ? { Target_Audience_Or_Angle: d.targetAudienceOrAngle } : {}),
       }));
-      if (typeof d.isAgency === "boolean") setRecipientType(d.isAgency ? "AGENCY" : "DIRECT");
+      if (typeof subjectNames.isAgency !== "boolean" && typeof d.isAgency === "boolean") {
+        setRecipientType(d.isAgency ? "AGENCY" : "DIRECT");
+      }
     } catch (e) {
       setAutoFillError(e instanceof Error ? e.message : "Couldn't read that thread — fill in the details below yourself.");
     } finally {
@@ -218,6 +240,8 @@ export default function TrackPage() {
   function selectThread(thread: ThreadResult) {
     setSelectedThread(thread);
     setStartingStep(0);
+    setScheduleMode("auto");
+    setManualScheduledAt("");
     autoFillFromThread(thread);
   }
 
@@ -237,6 +261,7 @@ export default function TrackPage() {
           initialMessageId: selectedThread.messageId,
           subject: selectedThread.subject,
           startingStep,
+          manualScheduledAt: scheduleMode === "manual" && manualScheduledAt ? new Date(manualScheduledAt).toISOString() : undefined,
           contactEmail,
           contactName,
           brand:
@@ -420,6 +445,34 @@ export default function TrackPage() {
                     />
                   ))}
                 </div>
+
+                {startingStep < 3 && (
+                  <div className="pt-3" style={{ borderTop: "1px solid var(--border)" }}>
+                    <label className="block text-xs font-medium text-[var(--muted)] mb-2">
+                      When should follow-up #{startingStep + 1} go out?
+                    </label>
+                    <div className="flex gap-2 flex-wrap mb-2">
+                      <RadioButton
+                        checked={scheduleMode === "auto"}
+                        onClick={() => setScheduleMode("auto")}
+                        label="Automatic (recommended)"
+                      />
+                      <RadioButton
+                        checked={scheduleMode === "manual"}
+                        onClick={() => setScheduleMode("manual")}
+                        label="Pick a date & time myself"
+                      />
+                    </div>
+                    {scheduleMode === "manual" && (
+                      <input
+                        type="datetime-local"
+                        className="input max-w-xs"
+                        value={manualScheduledAt}
+                        onChange={(e) => setManualScheduledAt(e.target.value)}
+                      />
+                    )}
+                  </div>
+                )}
               </section>
 
               <section className="card p-5 space-y-3">

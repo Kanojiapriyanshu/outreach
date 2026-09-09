@@ -43,6 +43,11 @@ export interface TrackEmailInput extends ContactInput {
    * "already sent it" attach flow; composeAndSendInitialEmail/scheduleInitialEmail always start
    * fresh, since the CRM itself is the one sending Email 1 there. */
   startingStep?: number;
+  /** ISO datetime — when set, overrides the automatic business-day/window calculation for the
+   * next follow-up (the one right after startingStep) with this exact moment instead. Lets the
+   * team pick their own timing for a thread they're attaching rather than always getting
+   * whatever the automatic cadence would compute. */
+  manualScheduledAt?: string;
 }
 
 export type TrackEmailResult =
@@ -121,7 +126,14 @@ function stepStatus(step: number): SequenceStatus {
 
 /** Creates the sequence + Email 1 message record + first follow-up schedule. Shared tail of both flows. */
 async function finalizeSequence(
-  input: ContactInput & { threadId: string; initialMessageId: string; subject: string; body: string; startingStep?: number },
+  input: ContactInput & {
+    threadId: string;
+    initialMessageId: string;
+    subject: string;
+    body: string;
+    startingStep?: number;
+    manualScheduledAt?: string;
+  },
   contactId: string
 ) {
   const recipientType = input.recipientType ?? "DIRECT";
@@ -186,7 +198,9 @@ async function finalizeSequence(
 
   const nextStep = startingStep + 1;
   const settings = await prisma.automationSettings.findFirstOrThrow();
-  const scheduledAt = computeNextScheduledAt(input.outreachType, nextStep, settings);
+  const manualDate = input.manualScheduledAt ? new Date(input.manualScheduledAt) : null;
+  const scheduledAt =
+    manualDate && !isNaN(manualDate.getTime()) ? manualDate : computeNextScheduledAt(input.outreachType, nextStep, settings);
 
   // Template.step N+1 = "Follow-Up N" (step 1 is Email 1) — look up its current active version
   // so an edited-since-seed template isn't silently skipped over.
@@ -209,7 +223,10 @@ async function finalizeSequence(
     data: {
       sequenceId: sequence.id,
       eventType: "FOLLOW_UP_SCHEDULED",
-      description: `Follow-up #${nextStep} is set for ${scheduledAt.toLocaleString()}.`,
+      description:
+        manualDate && !isNaN(manualDate.getTime())
+          ? `Follow-up #${nextStep} is set for ${scheduledAt.toLocaleString()} (picked by hand).`
+          : `Follow-up #${nextStep} is set for ${scheduledAt.toLocaleString()}.`,
     },
   });
 
