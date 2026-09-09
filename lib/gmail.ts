@@ -108,6 +108,99 @@ export async function getThreadSummary(
   return { threadId, messages };
 }
 
+function base64UrlDecode(data: string): string {
+  return Buffer.from(data, "base64url").toString("utf-8");
+}
+
+/** Strips tags/entities from an HTML body down to readable plain text — good enough for feeding an
+ * extractor, not for display. */
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>|<\/div>|<\/tr>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** Walks a message payload's MIME tree for the best plain-text rendering: prefers text/plain,
+ * falls back to text/html stripped down to text if that's all there is. */
+function extractPlainTextFromPayload(payload: gmail_v1.Schema$MessagePart | undefined): string {
+  if (!payload) return "";
+
+  let plainPart: string | null = null;
+  let htmlPart: string | null = null;
+
+  function walk(part: gmail_v1.Schema$MessagePart) {
+    const data = part.body?.data;
+    if (part.mimeType === "text/plain" && data && plainPart === null) {
+      plainPart = base64UrlDecode(data);
+    } else if (part.mimeType === "text/html" && data && htmlPart === null) {
+      htmlPart = base64UrlDecode(data);
+    }
+    for (const child of part.parts ?? []) walk(child);
+  }
+  walk(payload);
+
+  if (plainPart !== null) return (plainPart as string).trim();
+  if (htmlPart !== null) return htmlToPlainText(htmlPart as string);
+  return "";
+}
+
+// Common client-generated quote-intro headers ("On Mon, Sep 2, 2026 at 4:29 PM Fidem Growth
+// <x@y.com> wrote:", the Outlook-style "From:/Sent:/To:/Subject:" block). English-only and easy
+// to dodge (Gmail localizes "wrote:" per the sender's own language, and wraps long lines) so
+// this is just a bonus catch — the ">"-prefixed blockquote pattern below is what actually holds
+// across locales, since that quoting convention itself isn't translated.
+const QUOTE_HEADER_PATTERNS = [/^On .{0,120}wrote:\s*$/im, /^-{2,}\s*Original Message\s*-{2,}$/im, /^From:\s.+$/im];
+// The first line of the quoted reply chain itself, in any language a client localizes "wrote:"
+// into — reliable because the ">" convention is added by the client, not translated text.
+const BLOCKQUOTE_LINE = /^\s*>/m;
+
+/** Trims a message body down to just the new content, dropping the quoted reply chain below it. */
+function stripQuotedReply(text: string): string {
+  let cut = text.length;
+  for (const pattern of [...QUOTE_HEADER_PATTERNS, BLOCKQUOTE_LINE]) {
+    const match = text.match(pattern);
+    if (match?.index != null && match.index < cut) cut = match.index;
+  }
+  return text.slice(0, cut).trim();
+}
+
+export interface ThreadMessageText {
+  id: string;
+  from: string;
+  date: string;
+  subject: string;
+  text: string;
+}
+
+/**
+ * Fetches every message in a thread with its actual body text (not just headers/snippet) —
+ * used to auto-fill the "Tell Us About Them" form from whatever's already in the thread
+ * instead of asking the team to paste it in by hand.
+ */
+export async function getThreadFullText(gmail: gmail_v1.Gmail, threadId: string): Promise<ThreadMessageText[]> {
+  const res = await gmail.users.threads.get({ userId: "me", id: threadId, format: "full" });
+  const messages = res.data.messages ?? [];
+  return messages.map((m) => ({
+    id: m.id!,
+    from: decodeHeaderValue(m.payload?.headers, "From"),
+    date: decodeHeaderValue(m.payload?.headers, "Date"),
+    subject: decodeHeaderValue(m.payload?.headers, "Subject"),
+    text: stripQuotedReply(extractPlainTextFromPayload(m.payload)).slice(0, 4000),
+  }));
+}
+
 /** Searches the account's Sent mail for a message to `toEmail`, most recent first. */
 export async function findSentThreadTo(gmail: gmail_v1.Gmail, toEmail: string) {
   const res = await gmail.users.messages.list({

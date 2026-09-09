@@ -34,6 +34,7 @@ interface AttachDraft {
   channelName: string;
   channelUrl: string;
   variables: Record<string, string>;
+  startingStep: number;
 }
 
 const ATTACH_DRAFT_KEY = "fidem_track_page_draft";
@@ -47,6 +48,7 @@ const EMPTY_ATTACH_DRAFT: AttachDraft = {
   channelName: "",
   channelUrl: "",
   variables: {},
+  startingStep: 0,
 };
 
 function loadAttachDraft(): AttachDraft {
@@ -78,6 +80,9 @@ export default function TrackPage() {
   const [variables, setVariables] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [autoFilling, setAutoFilling] = useState(false);
+  const [autoFillError, setAutoFillError] = useState<string | null>(null);
+  const [startingStep, setStartingStep] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -104,6 +109,7 @@ export default function TrackPage() {
     setChannelName(d.channelName);
     setChannelUrl(d.channelUrl);
     setVariables(d.variables);
+    setStartingStep(d.startingStep);
   }, []);
 
   // Save on every change, skipping the very first tick (that's the restore above, not a real
@@ -116,13 +122,24 @@ export default function TrackPage() {
     try {
       localStorage.setItem(
         ATTACH_DRAFT_KEY,
-        JSON.stringify({ mode, outreachType, recipientType, contactEmail, brandDetails, creatorName, channelName, channelUrl, variables })
+        JSON.stringify({
+          mode,
+          outreachType,
+          recipientType,
+          contactEmail,
+          brandDetails,
+          creatorName,
+          channelName,
+          channelUrl,
+          variables,
+          startingStep,
+        })
       );
     } catch {
       // localStorage can throw in private-browsing/storage-full edge cases — not worth failing
       // the form over losing draft persistence.
     }
-  }, [mode, outreachType, recipientType, contactEmail, brandDetails, creatorName, channelName, channelUrl, variables]);
+  }, [mode, outreachType, recipientType, contactEmail, brandDetails, creatorName, channelName, channelUrl, variables, startingStep]);
 
   async function searchThreads() {
     setSearchLoading(true);
@@ -147,6 +164,63 @@ export default function TrackPage() {
 
   const contactName = outreachType === "BRAND" ? brandDetails.contactName : creatorName;
 
+  // Pulls the whole thread's text and runs it through the same extractor the "paste an email"
+  // flow uses — the thread was already found via search, so there's no reason to make the team
+  // copy-paste it by hand too. BRAND only: the creator flow's fields (name/channel/niche) aren't
+  // things this extractor tries to detect.
+  async function autoFillFromThread(thread: ThreadResult) {
+    if (outreachType !== "BRAND" || !emailAccountId) return;
+    setAutoFilling(true);
+    setAutoFillError(null);
+    try {
+      const params = new URLSearchParams({ threadId: thread.threadId, emailAccountId });
+      const threadRes = await fetch(`/api/gmail/thread-text?${params.toString()}`);
+      const threadData = await threadRes.json();
+      if (!threadRes.ok) throw new Error(threadData.error ?? "Couldn't read that thread");
+      if (!threadData.text?.trim()) return; // nothing to extract from — leave fields as-is
+
+      const extractRes = await fetch("/api/extract/email-details", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emailText: threadData.text }),
+      });
+      const extractData = await extractRes.json();
+      if (!extractRes.ok) throw new Error(extractData.error ?? "Couldn't read that thread");
+      const d = extractData.details;
+
+      setBrandDetails((prev) => ({
+        ...prev,
+        contactName: d.contactName ?? prev.contactName,
+        brandName: d.brandOrAgencyName ?? prev.brandName,
+        campaignName: d.campaignOrProductName ?? prev.campaignName,
+        category: d.category ?? prev.category,
+        budgetRangeText: d.budgetRangeText ?? prev.budgetRangeText,
+        budgetType: d.budgetType ?? prev.budgetType,
+        influencerRangeMin: d.influencerRangeMin != null ? String(d.influencerRangeMin) : prev.influencerRangeMin,
+        influencerRangeMax: d.influencerRangeMax != null ? String(d.influencerRangeMax) : prev.influencerRangeMax,
+        deliverables: d.deliverables ?? prev.deliverables,
+        campaignTimeline: d.campaignTimeline ?? prev.campaignTimeline,
+      }));
+      setVariables((prev) => ({
+        ...prev,
+        ...(d.nicheCategories ? { Niche_Categories: d.nicheCategories } : {}),
+        ...(d.keyProductFeatures ? { Key_Product_Features: d.keyProductFeatures } : {}),
+        ...(d.targetAudienceOrAngle ? { Target_Audience_Or_Angle: d.targetAudienceOrAngle } : {}),
+      }));
+      if (typeof d.isAgency === "boolean") setRecipientType(d.isAgency ? "AGENCY" : "DIRECT");
+    } catch (e) {
+      setAutoFillError(e instanceof Error ? e.message : "Couldn't read that thread — fill in the details below yourself.");
+    } finally {
+      setAutoFilling(false);
+    }
+  }
+
+  function selectThread(thread: ThreadResult) {
+    setSelectedThread(thread);
+    setStartingStep(0);
+    autoFillFromThread(thread);
+  }
+
   async function submit() {
     if (!selectedThread || !emailAccountId) return;
     setSubmitting(true);
@@ -162,6 +236,7 @@ export default function TrackPage() {
           threadId: selectedThread.threadId,
           initialMessageId: selectedThread.messageId,
           subject: selectedThread.subject,
+          startingStep,
           contactEmail,
           contactName,
           brand:
@@ -308,7 +383,7 @@ export default function TrackPage() {
                       type="radio"
                       name="thread"
                       checked={selectedThread?.messageId === t.messageId}
-                      onChange={() => setSelectedThread(t)}
+                      onChange={() => selectThread(t)}
                     />
                     <div>
                       <div className="font-medium text-[var(--ink)]">{t.subject || "(no subject)"}</div>
@@ -323,7 +398,44 @@ export default function TrackPage() {
           {selectedThread && (
             <>
               <section className="card p-5 space-y-3">
-                <h2 className="font-semibold text-sm text-[var(--ink)]">3. Tell Us About Them</h2>
+                <h2 className="font-semibold text-sm text-[var(--ink)]">3. How Far Along Is This?</h2>
+                <p className="text-sm text-[var(--muted)]">
+                  If you&rsquo;ve already sent one or more follow-ups yourself from Gmail, tell us which — we&rsquo;ll
+                  pick up right after that instead of starting over. Nothing here is fixed; change it any time from
+                  the sequence page later.
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  {[0, 1, 2, 3].map((step) => (
+                    <RadioButton
+                      key={step}
+                      checked={startingStep === step}
+                      onClick={() => setStartingStep(step)}
+                      label={
+                        step === 0
+                          ? "Nothing yet — this is the first follow-up"
+                          : step === 3
+                            ? "I've sent all 3 follow-ups already"
+                            : `I've already sent follow-up${step > 1 ? "s" : ""} ${Array.from({ length: step }, (_, i) => i + 1).join(" & ")}`
+                      }
+                    />
+                  ))}
+                </div>
+              </section>
+
+              <section className="card p-5 space-y-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <h2 className="font-semibold text-sm text-[var(--ink)]">4. Tell Us About Them</h2>
+                  {autoFilling && (
+                    <span className="text-xs font-medium" style={{ color: "var(--brand-teal-dark)" }}>
+                      Reading the thread and filling this in…
+                    </span>
+                  )}
+                </div>
+                {autoFillError && (
+                  <p className="text-xs" style={{ color: "var(--danger-fg)" }}>
+                    {autoFillError}
+                  </p>
+                )}
                 {outreachType === "BRAND" ? (
                   <BrandDetailsForm
                     recipientType={recipientType}
@@ -346,7 +458,7 @@ export default function TrackPage() {
 
               {outreachType === "CREATOR" && (
                 <section className="card p-5 space-y-3">
-                  <h2 className="font-semibold text-sm text-[var(--ink)]">4. Fill In the Details</h2>
+                  <h2 className="font-semibold text-sm text-[var(--ink)]">5. Fill In the Details</h2>
                   {CREATOR_VARIABLES.filter((k) => k !== "Creator_Name").map((key) => (
                     <TextField
                       key={key}
@@ -359,7 +471,11 @@ export default function TrackPage() {
               )}
 
               <button onClick={submit} disabled={submitting} className="btn-primary px-5 py-2.5 text-sm">
-                {submitting ? "Starting…" : "Start the Follow-Ups"}
+                {submitting
+                  ? "Starting…"
+                  : startingStep >= 3
+                    ? "Save This Sequence"
+                    : `Start Scheduling Follow-Up #${startingStep + 1}`}
               </button>
               {submitError && <p className="text-sm" style={{ color: "var(--danger-fg)" }}>{submitError}</p>}
             </>

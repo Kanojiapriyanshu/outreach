@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma migrate deploy || echo 'migrate deploy failed (see prisma.config.ts note on Neon pooled advisory locks) - continuing; migrations are already applied by hand before every push' && next build",
+    "build": "node scripts/build.js",
     "start": "next start",
     "lint": "eslint",
     "postinstall": "prisma generate",

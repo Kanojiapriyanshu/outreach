@@ -3,6 +3,7 @@ import { renderTemplate, variablesForType } from "@/lib/templates";
 import { gmailClientFor, sendInitialEmail } from "@/lib/gmail";
 import { isUnderDailyLimit } from "@/lib/quota";
 import { computeNextScheduledAt } from "@/lib/scheduler";
+import { MAX_FOLLOW_UPS, type SequenceStatus } from "@/lib/stateMachine";
 
 export type RecipientType = "DIRECT" | "AGENCY";
 
@@ -37,6 +38,11 @@ export interface TrackEmailInput extends ContactInput {
   threadId: string;
   initialMessageId: string;
   subject: string;
+  /** How many follow-ups the team already sent themselves from Gmail before attaching this
+   * thread — 0 means none yet (schedule follow-up #1 as usual). Only meaningful for the
+   * "already sent it" attach flow; composeAndSendInitialEmail/scheduleInitialEmail always start
+   * fresh, since the CRM itself is the one sending Email 1 there. */
+  startingStep?: number;
 }
 
 export type TrackEmailResult =
@@ -107,12 +113,22 @@ async function createContact(input: ContactInput) {
   });
 }
 
+function stepStatus(step: number): SequenceStatus {
+  if (step === 0) return "WAITING_FOR_REPLY";
+  if (step >= MAX_FOLLOW_UPS) return "COMPLETED";
+  return `FOLLOW_UP_${step}_SENT` as SequenceStatus;
+}
+
 /** Creates the sequence + Email 1 message record + first follow-up schedule. Shared tail of both flows. */
 async function finalizeSequence(
-  input: ContactInput & { threadId: string; initialMessageId: string; subject: string; body: string },
+  input: ContactInput & { threadId: string; initialMessageId: string; subject: string; body: string; startingStep?: number },
   contactId: string
 ) {
   const recipientType = input.recipientType ?? "DIRECT";
+  // How many follow-ups the team already sent by hand before attaching this thread — 0 for the
+  // normal case (nothing sent yet), up to MAX_FOLLOW_UPS if they'd already gone through the
+  // whole cadence themselves.
+  const startingStep = Math.max(0, Math.min(input.startingStep ?? 0, MAX_FOLLOW_UPS));
 
   const sequence = await prisma.outreachSequence.create({
     data: {
@@ -122,8 +138,12 @@ async function finalizeSequence(
       emailAccountId: input.emailAccountId,
       threadId: input.threadId,
       initialMessageId: input.initialMessageId,
-      currentStep: 0,
-      status: "WAITING_FOR_REPLY",
+      currentStep: startingStep,
+      status: stepStatus(startingStep),
+      // The automation's own natural completion (3 follow-ups, no reply) also moves the pipeline
+      // stage to Not Interested — mirror that here for a sequence attached already at that point,
+      // so it doesn't sit shown as "First Email Sent" despite being done.
+      stage: startingStep >= MAX_FOLLOW_UPS ? "NOT_INTERESTED" : undefined,
       variables: deriveVariables(input),
     },
   });
@@ -144,27 +164,44 @@ async function finalizeSequence(
     data: {
       sequenceId: sequence.id,
       eventType: "SEQUENCE_CREATED",
-      description: `Started tracking ${input.contactEmail}.`,
+      description:
+        startingStep > 0
+          ? `Started tracking ${input.contactEmail} — picking up after follow-up #${startingStep}, already sent by hand.`
+          : `Started tracking ${input.contactEmail}.`,
     },
   });
 
-  const settings = await prisma.automationSettings.findFirstOrThrow();
-  const scheduledAt = computeNextScheduledAt(input.outreachType, 1, settings);
+  if (startingStep >= MAX_FOLLOW_UPS) {
+    // All 3 follow-ups were already sent manually with no reply by the time this got attached —
+    // nothing left to schedule; this mirrors what the automation would have done on its own.
+    await prisma.activityLog.create({
+      data: {
+        sequenceId: sequence.id,
+        eventType: "SEQUENCE_COMPLETED",
+        description: "All 3 follow-ups were already sent by hand with no reply — nothing left to schedule.",
+      },
+    });
+    return sequence.id;
+  }
 
-  // Template.step 2 = "Follow-Up 1" (step 1 is Email 1) — look up its current active version
+  const nextStep = startingStep + 1;
+  const settings = await prisma.automationSettings.findFirstOrThrow();
+  const scheduledAt = computeNextScheduledAt(input.outreachType, nextStep, settings);
+
+  // Template.step N+1 = "Follow-Up N" (step 1 is Email 1) — look up its current active version
   // so an edited-since-seed template isn't silently skipped over.
-  const followUp1Template = await prisma.template.findFirst({
-    where: { outreachType: input.outreachType, recipientType, step: 2, isActive: true },
+  const followUpTemplate = await prisma.template.findFirst({
+    where: { outreachType: input.outreachType, recipientType, step: nextStep + 1, isActive: true },
   });
 
   await prisma.scheduledAction.create({
     data: {
       sequenceId: sequence.id,
-      step: 1,
+      step: nextStep,
       scheduledAt,
       status: "PENDING",
-      templateVersion: followUp1Template?.version ?? 1,
-      actionKey: `${sequence.id}-step-1`,
+      templateVersion: followUpTemplate?.version ?? 1,
+      actionKey: `${sequence.id}-step-${nextStep}`,
     },
   });
 
@@ -172,7 +209,7 @@ async function finalizeSequence(
     data: {
       sequenceId: sequence.id,
       eventType: "FOLLOW_UP_SCHEDULED",
-      description: `Follow-up #1 is set for ${scheduledAt.toLocaleString()}.`,
+      description: `Follow-up #${nextStep} is set for ${scheduledAt.toLocaleString()}.`,
     },
   });
 
