@@ -102,6 +102,14 @@ function extractContactName(text: string): string | undefined {
   return introMatch?.[1];
 }
 
+/** "Hello SABALA Team," / "Hi Kris," at the very start of an email WE wrote — the addressee's
+ * name/company, not ours. Only meaningful when extracting from our own outbound text (see
+ * `isOutbound` below); running this on an inbound reply would grab whoever THEY greeted (us). */
+function extractGreetingAddressee(text: string): string | undefined {
+  const match = text.match(/^\s*(?:Hi|Hello|Hey|Dear)\s+([A-Z][A-Za-z0-9&'’.\- ]{1,40}?)[,!\n]/m);
+  return match ? cleanCompanyName(match[1]) : undefined;
+}
+
 const GENERIC_LEAD_WORDS = /^(a|an|the|our|leading|upcoming)\b/i;
 
 /**
@@ -250,10 +258,40 @@ function namesOverlap(a: string, b: string): boolean {
  * Regex/keyword-based extraction — no API key or network call required. This is the default
  * path; the LLM extractor (lib/emailExtractor.ts) is only used on top of this when
  * ANTHROPIC_API_KEY is configured, for cases this can't reliably catch (nuanced phrasing).
+ *
+ * `isOutbound` — set when extracting from an email WE wrote (e.g. Email 1, attached after the
+ * fact with no reply yet) rather than one the brand/creator sent us. Signature-based patterns
+ * ("from X", "on behalf of X") would otherwise misattribute OUR OWN identity as theirs, and the
+ * sign-off name would grab whoever WE signed as, not them — so those are skipped in favor of the
+ * greeting line ("Hello SABALA Team,"), which is the one part of an outbound email that actually
+ * names the recipient.
  */
-export function extractBrandDetailsHeuristic(rawEmailText: string): ExtractedBrandDetails {
+export function extractBrandDetailsHeuristic(rawEmailText: string, opts: { isOutbound?: boolean } = {}): ExtractedBrandDetails {
   const text = rawEmailText.trim();
   if (!text) return {};
+
+  if (opts.isOutbound) {
+    const greetedName = extractGreetingAddressee(text);
+    const categoryMatch = findCategoryMatch(text);
+    const { min, max } = extractInfluencerRange(text);
+    const budget = extractBudget(text);
+    const result: ExtractedBrandDetails = {
+      brandOrAgencyName: greetedName,
+      campaignOrProductName: greetedName,
+      isAgency: false,
+      category: categoryMatch?.category,
+      nicheCategories: categoryMatch?.niche,
+      keyProductFeatures: extractKeyProductFeatures(text),
+      targetAudienceOrAngle: extractTargetAudienceOrAngle(text, categoryMatch),
+      budgetRangeText: budget.text,
+      budgetType: budget.type,
+      influencerRangeMin: min,
+      influencerRangeMax: max,
+      deliverables: extractDeliverables(text),
+      campaignTimeline: extractCampaignTimeline(text),
+    };
+    return Object.fromEntries(Object.entries(result).filter(([, v]) => v !== undefined)) as ExtractedBrandDetails;
+  }
 
   const onBehalfOf = extractOnBehalfOf(text);
   const signerName = parseSignature(text).company ?? extractFromCompany(text);

@@ -61,9 +61,16 @@ Return ONLY a JSON object (no markdown fences, no other text) with these fields,
   "campaignTimeline": string         // campaign dates/window mentioned, e.g. "Aug 28 - Sept 4"
 }`;
 
-async function extractWithLLM(rawEmailText: string): Promise<ExtractedBrandDetails | null> {
+async function extractWithLLM(rawEmailText: string, isOutbound: boolean): Promise<ExtractedBrandDetails | null> {
   const anthropic = getClient();
   if (!anthropic) return null;
+
+  const directionNote = isOutbound
+    ? "\n\nIMPORTANT: this email was WRITTEN BY US (Fidem Growth) TO a brand/creator — not one they sent us. " +
+      "Extract the RECIPIENT's identity (who we greeted, e.g. \"Hello SABALA Team,\" -> SABALA), never our own " +
+      "company name from a self-introduction like \"This is Yash from Fidem Growth.\" Omit contactName/contactEmail " +
+      "entirely — a sign-off in this email is OUR signature, not theirs."
+    : "";
 
   try {
     const response = await anthropic.messages.create({
@@ -72,7 +79,7 @@ async function extractWithLLM(rawEmailText: string): Promise<ExtractedBrandDetai
       messages: [
         {
           role: "user",
-          content: `${SCHEMA_INSTRUCTIONS}\n\nEmail:\n"""${rawEmailText.slice(0, 6000)}"""`,
+          content: `${SCHEMA_INSTRUCTIONS}${directionNote}\n\nEmail:\n"""${rawEmailText.slice(0, 6000)}"""`,
         },
       ],
     });
@@ -102,12 +109,19 @@ async function extractWithLLM(rawEmailText: string): Promise<ExtractedBrandDetai
  * Works with zero configuration via regex/keyword heuristics (lib/emailExtractorHeuristic.ts).
  * If ANTHROPIC_API_KEY is set, an LLM pass runs on top and fills in anything the heuristics
  * missed or phrased more precisely — but nothing here requires an API key to function.
+ *
+ * `isOutbound` — set when this is an email WE wrote (e.g. attaching Email 1 with no reply yet)
+ * rather than one sent to us; see the note on extractBrandDetailsHeuristic for why that changes
+ * which patterns are safe to use.
  */
-export async function extractBrandDetailsFromEmail(rawEmailText: string): Promise<ExtractedBrandDetails> {
+export async function extractBrandDetailsFromEmail(
+  rawEmailText: string,
+  opts: { isOutbound?: boolean } = {}
+): Promise<ExtractedBrandDetails> {
   if (!rawEmailText.trim()) return {};
 
-  const heuristic = extractBrandDetailsHeuristic(rawEmailText);
-  const llm = await extractWithLLM(rawEmailText);
+  const heuristic = extractBrandDetailsHeuristic(rawEmailText, opts);
+  const llm = await extractWithLLM(rawEmailText, !!opts.isOutbound);
   if (!llm) return heuristic;
 
   // LLM fields fill gaps and refine over the heuristic result; heuristic still backs up

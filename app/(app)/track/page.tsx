@@ -182,7 +182,7 @@ export default function TrackPage() {
       const extractRes = await fetch("/api/extract/email-details", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emailText: threadData.text }),
+        body: JSON.stringify({ emailText: threadData.text, isOutbound: threadData.isOutbound }),
       });
       const extractData = await extractRes.json();
       if (!extractRes.ok) throw new Error(extractData.error ?? "Couldn't read that thread");
