@@ -18,7 +18,10 @@ async function tick() {
   if (result.actionsProcessed > 0) {
     console.log(`[worker ${result.startedAt}] processed ${result.actionsProcessed} action(s):`, result.actionResults);
   }
-  if (result.repliesFound === 0 && result.initialEmailsSent === 0 && result.actionsProcessed === 0) {
+  if (result.newMailFound > 0) {
+    console.log(`[worker ${result.startedAt}] found ${result.newMailFound} new untracked inbox message(s).`);
+  }
+  if (result.repliesFound === 0 && result.initialEmailsSent === 0 && result.actionsProcessed === 0 && result.newMailFound === 0) {
     console.log(`[worker ${result.startedAt}] nothing to do.`);
   }
 }

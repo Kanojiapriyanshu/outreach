@@ -175,7 +175,37 @@ model EmailAccount {
   dailySendLimit  Int               @default(450)
   createdAt       DateTime          @default(now())
 
-  sequences OutreachSequence[]
+  sequences   OutreachSequence[]
+  inboxAlerts InboxAlert[]
+}
+
+/**
+ * A new inbound Gmail message that doesn't belong to any tracked OutreachSequence thread —
+ * someone new emailing in, or a reply landing on a thread the team never attached to the CRM.
+ * Populated by the inbox-watch pass (lib/inboxWatch.ts) every worker tick, surfaced in the
+ * notifications bell alongside the existing reply/bounce/opt-out feed so nothing shows up in
+ * Gmail without the team also seeing it here. Deliberately separate from ActivityLog, which is
+ * always sequence-scoped — these by definition aren't (yet).
+ */
+model InboxAlert {
+  id             String       @id @default(cuid())
+  emailAccountId String
+  emailAccount   EmailAccount @relation(fields: [emailAccountId], references: [id])
+  gmailMessageId String
+  gmailThreadId  String
+  fromAddress    String
+  fromName       String
+  subject        String
+  snippet        String       @db.Text
+  receivedAt     DateTime
+  createdAt      DateTime     @default(now())
+  /** Set once the team has acted on it (replied in Gmail, started tracking it, or just decided
+   * it doesn't need anything) — keeps it out of both the unread count and the list without
+   * losing the record. */
+  dismissedAt    DateTime?
+
+  @@unique([emailAccountId, gmailMessageId])
+  @@index([dismissedAt, receivedAt])
 }
 
 model Brand {

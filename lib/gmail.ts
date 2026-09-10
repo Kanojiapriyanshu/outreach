@@ -227,6 +227,54 @@ export async function findSentThreadTo(gmail: gmail_v1.Gmail, toEmail: string) {
   return results;
 }
 
+/** Cheap first pass for the inbox-watch scan — just ids/threadIds, no per-message API call, so
+ * the caller can filter out anything already tracked or already seen before spending Gmail API
+ * quota on the (usually much smaller) set of genuinely new candidates. */
+export async function listRecentInboxMessageIds(
+  gmail: gmail_v1.Gmail,
+  maxResults: number
+): Promise<{ id: string; threadId: string }[]> {
+  const res = await gmail.users.messages.list({ userId: "me", labelIds: ["INBOX"], maxResults });
+  return (res.data.messages ?? []).map((m) => ({ id: m.id!, threadId: m.threadId! }));
+}
+
+export interface InboxMessageMetadata {
+  from: string;
+  subject: string;
+  snippet: string;
+  internalDate: Date;
+}
+
+/** Fetches just enough to decide whether an inbox message is worth surfacing as a new-mail
+ * notification — who it's from, the subject, and a snippet, without pulling the full body. */
+export async function getInboxMessageMetadata(gmail: gmail_v1.Gmail, messageId: string): Promise<InboxMessageMetadata> {
+  const res = await gmail.users.messages.get({
+    userId: "me",
+    id: messageId,
+    format: "metadata",
+    metadataHeaders: ["From", "Subject"],
+  });
+  return {
+    from: decodeHeaderValue(res.data.payload?.headers, "From"),
+    subject: decodeHeaderValue(res.data.payload?.headers, "Subject"),
+    snippet: res.data.snippet ?? "",
+    internalDate: res.data.internalDate ? new Date(Number(res.data.internalDate)) : new Date(),
+  };
+}
+
+/** Splits a "From" header ("Jane Doe <jane@brand.com>") into name and address — the address is
+ * always present, the display name falls back to the address itself when the header has none. */
+export function parseFromHeader(from: string): { name: string; address: string } {
+  const match = from.match(/^\s*"?([^"<]*)"?\s*<([^>]+)>\s*$/);
+  if (match) {
+    const name = match[1].trim();
+    const address = match[2].trim();
+    return { name: name || address, address };
+  }
+  const address = from.trim();
+  return { name: address, address };
+}
+
 function base64UrlEncode(input: string) {
   return Buffer.from(input, "utf-8")
     .toString("base64")

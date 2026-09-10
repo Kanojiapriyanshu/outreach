@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { Bell } from "lucide-react";
+import { Bell, ExternalLink, X } from "lucide-react";
 import { formatDateTime } from "@/lib/formatDate";
 
 interface Notification {
@@ -17,6 +17,16 @@ interface Notification {
   } | null;
 }
 
+interface InboxAlert {
+  id: string;
+  gmailThreadId: string;
+  fromAddress: string;
+  fromName: string;
+  subject: string;
+  snippet: string;
+  receivedAt: string;
+}
+
 const LAST_SEEN_KEY = "fidem_notifications_last_seen";
 
 /** Prefixes (or strips) the "(N) " unread-count badge on the browser tab title, Gmail-style —
@@ -29,17 +39,26 @@ function setTitleBadge(count: number) {
   document.title = count > 0 ? `(${count > 99 ? "99+" : count}) ${base}` : base;
 }
 
-/** A reply/bounce/opt-out feed, Gmail-notification style — separate from the full History log,
- * which is everything (including routine bookkeeping); this is only what actually needs eyes on
- * it. "Unread" is tracked per-browser via localStorage (no server-side read state) — simple, and
+/**
+ * Two feeds in one bell, Gmail-notification style:
+ *  - Replies & Updates: high-signal ActivityLog events on threads the CRM is already tracking
+ *    (a reply, a bounce, an opt-out).
+ *  - New in Your Inbox: mail the inbox-watch pass (lib/inboxWatch.ts, runs every worker tick —
+ *    every 5 minutes) found that ISN'T part of any tracked thread — a brand-new contact writing
+ *    in, or a reply on something never attached to the CRM. Each one can be opened straight in
+ *    Gmail to respond, turned into a new tracked outreach, or dismissed once handled.
+ * "Unread" is tracked per-browser via localStorage (no server-side read state) — simple, and
  * fine for how this is actually used: a personal "have I seen this yet" marker, not a shared
- * read/unread status across the team. The count itself, though, comes from the server (see
- * /api/notifications' `since` param) so a batch of more than 30 replies landing at once still
- * shows its real total instead of being silently capped by the display list. */
+ * read/unread status across the team. The count itself comes from the server (see
+ * /api/notifications' `since` param) so a batch landing all at once still shows its real total
+ * instead of being silently capped by the display lists.
+ */
 export default function NotificationsBell() {
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [inboxAlerts, setInboxAlerts] = useState<InboxAlert[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [dismissing, setDismissing] = useState<string | null>(null);
 
   // Re-reads the last-seen marker from localStorage on every call, rather than closing over it
   // once — the 60s poll interval below is set up a single time, so if it captured `since` instead
@@ -56,6 +75,7 @@ export default function NotificationsBell() {
       const res = await fetch(`/api/notifications?since=${encodeURIComponent(new Date(since).toISOString())}`);
       const data = await res.json();
       setNotifications(data.notifications ?? []);
+      setInboxAlerts(data.inboxAlerts ?? []);
       setUnreadCount(data.unreadCount ?? 0);
       setTitleBadge(data.unreadCount ?? 0);
     } catch {
@@ -86,6 +106,19 @@ export default function NotificationsBell() {
     }
   }
 
+  async function dismissAlert(id: string) {
+    setDismissing(id);
+    setInboxAlerts((prev) => prev.filter((a) => a.id !== id));
+    try {
+      await fetch(`/api/inbox-alerts/${id}`, { method: "PATCH" });
+    } catch {
+      // A failed dismiss just means it reappears on the next poll — not worth reverting the
+      // optimistic removal for.
+    } finally {
+      setDismissing(null);
+    }
+  }
+
   return (
     <div className="relative">
       <button
@@ -108,13 +141,60 @@ export default function NotificationsBell() {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
-            className="absolute left-0 md:left-auto md:right-0 top-full mt-2 w-80 max-w-[90vw] max-h-96 overflow-y-auto card p-2 z-50 shadow-xl"
+            className="absolute left-0 md:left-auto md:right-0 top-full mt-2 w-80 max-w-[90vw] max-h-[28rem] overflow-y-auto card p-2 z-50 shadow-xl"
             style={{ boxShadow: "var(--shadow-card)" }}
           >
+            {inboxAlerts.length > 0 && (
+              <>
+                <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                  New in Your Inbox
+                </div>
+                {inboxAlerts.map((a) => (
+                  <div key={a.id} className="rounded-lg px-2.5 py-2 text-sm hover:bg-[var(--bg)] transition-colors">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-[var(--ink)] font-medium truncate">{a.fromName || a.fromAddress}</div>
+                        <div className="text-[var(--muted-2)] text-xs truncate">{a.subject || "(no subject)"}</div>
+                      </div>
+                      <button
+                        onClick={() => dismissAlert(a.id)}
+                        disabled={dismissing === a.id}
+                        aria-label="Dismiss"
+                        className="shrink-0 p-1 rounded text-[var(--muted-2)] hover:text-[var(--ink)] hover:bg-[var(--surface)]"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                    <div className="text-[var(--muted-2)] text-xs mt-1 line-clamp-2">{a.snippet}</div>
+                    <div className="flex items-center gap-3 mt-1.5 text-xs">
+                      <a
+                        href={`https://mail.google.com/mail/u/0/#all/${a.gmailThreadId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 font-medium"
+                        style={{ color: "var(--brand-teal-dark)" }}
+                      >
+                        <ExternalLink size={11} /> Open in Gmail
+                      </a>
+                      <Link
+                        href={`/track?contactEmail=${encodeURIComponent(a.fromAddress)}`}
+                        onClick={() => setOpen(false)}
+                        className="font-medium"
+                        style={{ color: "var(--brand-teal-dark)" }}
+                      >
+                        Track as outreach
+                      </Link>
+                      <span className="text-[var(--muted-2)] ml-auto">{formatDateTime(new Date(a.receivedAt))}</span>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+
             <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
               Replies &amp; Updates
             </div>
-            {notifications.length === 0 && (
+            {notifications.length === 0 && inboxAlerts.length === 0 && (
               <p className="px-2 py-6 text-center text-sm text-[var(--muted-2)]">Nothing yet — you&rsquo;re all caught up.</p>
             )}
             {notifications.map((n) => (

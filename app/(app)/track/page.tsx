@@ -131,6 +131,14 @@ function TrackPageInner() {
       setMode("compose");
       setOutreachType(draftOutreachType);
     }
+
+    // Arriving from a "Track as outreach" link on a new-inbox notification — prefill who it's
+    // to and drop straight into Write & Send instead of making the team retype the address.
+    const prefillEmail = searchParams.get("contactEmail");
+    if (prefillEmail) {
+      setMode("compose");
+      setContactEmail(prefillEmail);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

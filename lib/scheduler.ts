@@ -15,6 +15,7 @@ import { isUnderDailyLimit } from "@/lib/quota";
 import { classifyReply } from "@/lib/replyClassifier";
 import { renderNudge, maxStepsForNudge, type NudgeKind } from "@/lib/genericNudgeTemplates";
 import { processScheduledInitialEmail } from "@/lib/trackSequence";
+import { scanInboxForNewMail } from "@/lib/inboxWatch";
 import { formatDateTime } from "@/lib/formatDate";
 import type { AutomationSettings, SequenceStatus as PrismaSequenceStatus, PipelineStage } from "@/app/generated/prisma/client";
 
@@ -821,19 +822,31 @@ export async function runDueInitialEmails() {
 
 /**
  * The full worker tick: send whatever's actually due first — scheduled Email 1s, then follow-ups
- * — and only then spend whatever's left of the time budget checking active sequences for
- * replies/manual-sends. Due sends go first on purpose: they're a promise to the team about when
- * something goes out, while reply-checking is inherently a poll that's fine to pick back up next
- * tick. This is what scripts/worker.ts calls on each poll.
+ * — then spend whatever's left of the time budget checking active sequences for replies/manual-
+ * sends, and finally scan each connected inbox for new mail that isn't part of any tracked thread
+ * at all (a brand-new contact, or a reply on something never attached to the CRM). Due sends go
+ * first on purpose: they're a promise to the team about when something goes out, while both kinds
+ * of inbox-checking are inherently a poll that's fine to pick back up next tick. This is what
+ * scripts/worker.ts calls on each poll.
  */
 export async function runWorkerTick() {
   const initialEmailResults = await runDueInitialEmails();
   const actionResults = await runDueScheduledActions();
   const replyResults = await runContinuousReplyCheck();
+  let newMailFound = 0;
+  try {
+    newMailFound = (await scanInboxForNewMail()).created;
+  } catch (err) {
+    // Same principle as the per-sequence try/catch inside runContinuousReplyCheck — a failure
+    // scanning for new mail must never take down the rest of the tick (the due-sends above
+    // already happened and shouldn't be reported as a failed tick because of this).
+    console.error("[inbox watch] tick failed:", err);
+  }
   return {
     repliesFound: replyResults.length,
     initialEmailsSent: initialEmailResults.length,
     actionsProcessed: actionResults.length,
+    newMailFound,
     replyResults,
     initialEmailResults,
     actionResults,

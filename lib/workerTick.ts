@@ -24,6 +24,7 @@ type TickResult =
       repliesFound: number;
       initialEmailsSent: number;
       actionsProcessed: number;
+      newMailFound: number;
       replyResults: unknown;
       initialEmailResults: unknown;
       actionResults: unknown;
@@ -40,7 +41,7 @@ type TickResult =
 export async function runTickWithHeartbeat(): Promise<TickResult> {
   const startedAt = new Date().toISOString();
   try {
-    const { repliesFound, initialEmailsSent, actionsProcessed, replyResults, initialEmailResults, actionResults } =
+    const { repliesFound, initialEmailsSent, actionsProcessed, newMailFound, replyResults, initialEmailResults, actionResults } =
       await runWorkerTick();
     await recordHeartbeat(true, actionsProcessed);
     return {
@@ -49,6 +50,7 @@ export async function runTickWithHeartbeat(): Promise<TickResult> {
       repliesFound,
       initialEmailsSent,
       actionsProcessed,
+      newMailFound,
       replyResults,
       initialEmailResults,
       actionResults,
