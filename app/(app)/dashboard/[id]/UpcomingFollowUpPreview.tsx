@@ -19,7 +19,13 @@ function toLocalInputValue(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export default function UpcomingFollowUpPreview({ scheduledActionId }: { scheduledActionId: string }) {
+export default function UpcomingFollowUpPreview({
+  scheduledActionId,
+  status,
+}: {
+  scheduledActionId: string;
+  status: "PENDING" | "CANCELLED";
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -32,6 +38,9 @@ export default function UpcomingFollowUpPreview({ scheduledActionId }: { schedul
   const [scheduleDraft, setScheduleDraft] = useState("");
   const [rescheduling, setRescheduling] = useState(false);
   const [rescheduled, setRescheduled] = useState(false);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [cancelDeleteBusy, setCancelDeleteBusy] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -102,6 +111,36 @@ export default function UpcomingFollowUpPreview({ scheduledActionId }: { schedul
     }
   }
 
+  async function cancel() {
+    setCancelDeleteBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/scheduled-actions/${scheduledActionId}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Couldn't cancel — try again.");
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't cancel — try again.");
+      setCancelDeleteBusy(false);
+      setConfirmingCancel(false);
+    }
+  }
+
+  async function deleteForever() {
+    setCancelDeleteBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/scheduled-actions/${scheduledActionId}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Couldn't delete — try again.");
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't delete — try again.");
+      setCancelDeleteBusy(false);
+      setConfirmingDelete(false);
+    }
+  }
+
   async function resetToTemplate() {
     setSaving(true);
     setError(null);
@@ -132,7 +171,7 @@ export default function UpcomingFollowUpPreview({ scheduledActionId }: { schedul
         style={{ color: "var(--brand-teal-dark)" }}
       >
         {open ? <EyeOff size={13} /> : <Eye size={13} />}
-        {open ? "Hide preview" : "Preview & edit this follow-up"}
+        {open ? "Hide" : status === "CANCELLED" ? "Reschedule or delete this cancelled follow-up" : "Preview & edit this follow-up"}
       </button>
 
       {open && (
@@ -141,27 +180,29 @@ export default function UpcomingFollowUpPreview({ scheduledActionId }: { schedul
           {error && <p className="text-sm" style={{ color: "var(--danger-fg)" }}>{error}</p>}
           {data && (
             <>
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <p className="text-xs text-[var(--muted-2)]">
-                  This is exactly what will be sent when it goes out — edit it directly if you want it different, no
-                  {" {tag}"} is required.
-                </p>
-                {data.isOverridden && (
-                  <button
-                    type="button"
-                    onClick={resetToTemplate}
-                    disabled={saving}
-                    className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-2)] hover:text-[var(--ink)] shrink-0"
-                    title="Discard your edit and go back to the live template"
-                  >
-                    <RotateCcw size={12} /> Reset to template
-                  </button>
-                )}
-              </div>
+              {status === "PENDING" && (
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <p className="text-xs text-[var(--muted-2)]">
+                    This is exactly what will be sent when it goes out — edit it directly if you want it different, no
+                    {" {tag}"} is required.
+                  </p>
+                  {data.isOverridden && (
+                    <button
+                      type="button"
+                      onClick={resetToTemplate}
+                      disabled={saving}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-2)] hover:text-[var(--ink)] shrink-0"
+                      title="Discard your edit and go back to the live template"
+                    >
+                      <RotateCcw size={12} /> Reset to template
+                    </button>
+                  )}
+                </div>
+              )}
 
               <div className="rounded-lg p-3 space-y-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                 <label className="flex items-center gap-1.5 text-xs font-medium text-[var(--muted)]">
-                  <CalendarClock size={13} /> When this goes out
+                  <CalendarClock size={13} /> {status === "CANCELLED" ? "Reschedule to send again" : "When this goes out"}
                 </label>
                 <div className="flex items-center gap-2 flex-wrap">
                   <input
@@ -176,39 +217,87 @@ export default function UpcomingFollowUpPreview({ scheduledActionId }: { schedul
                   <button
                     type="button"
                     onClick={reschedule}
-                    disabled={rescheduling || !scheduleDraft || toLocalInputValue(data.scheduledAt) === scheduleDraft}
+                    disabled={
+                      rescheduling || !scheduleDraft || (status === "PENDING" && toLocalInputValue(data.scheduledAt) === scheduleDraft)
+                    }
                     className="btn-secondary px-3 py-1.5 text-xs"
                   >
                     {rescheduling ? "Saving…" : "Reschedule"}
                   </button>
-                  {rescheduled && <span className="text-xs" style={{ color: "var(--success-fg)" }}>Rescheduled.</span>}
+                  {rescheduled && (
+                    <span className="text-xs" style={{ color: "var(--success-fg)" }}>
+                      {status === "CANCELLED" ? "Reopened." : "Rescheduled."}
+                    </span>
+                  )}
                 </div>
               </div>
 
-              <input
-                className="input font-semibold"
-                value={subjectDraft}
-                onChange={(e) => setSubjectDraft(e.target.value)}
-                placeholder="Subject"
-              />
-              <textarea
-                className="input font-sans"
-                style={{ minHeight: 180, resize: "vertical" }}
-                value={bodyDraft}
-                onChange={(e) => setBodyDraft(e.target.value)}
-                placeholder="Follow-up body"
-              />
-              <div className="flex items-center gap-2">
+              {status === "PENDING" && !confirmingCancel && (
                 <button
                   type="button"
-                  onClick={save}
-                  disabled={saving || (subjectDraft === data.subject && bodyDraft === data.body)}
-                  className="btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                  onClick={() => setConfirmingCancel(true)}
+                  className="btn-secondary px-3 py-1.5 text-xs"
                 >
-                  <Save size={13} /> {saving ? "Saving…" : "Save Edit"}
+                  Cancel this follow-up
                 </button>
-                {saved && <span className="text-xs" style={{ color: "var(--success-fg)" }}>Saved.</span>}
-              </div>
+              )}
+              {confirmingCancel && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-[var(--muted)]">Cancel this follow-up? It won&rsquo;t go out unless rescheduled.</span>
+                  <button onClick={cancel} disabled={cancelDeleteBusy} className="btn-danger px-2.5 py-1 text-xs">
+                    {cancelDeleteBusy ? "…" : "Yes, cancel"}
+                  </button>
+                  <button onClick={() => setConfirmingCancel(false)} disabled={cancelDeleteBusy} className="btn-secondary px-2.5 py-1 text-xs">
+                    Never mind
+                  </button>
+                </div>
+              )}
+
+              {status === "CANCELLED" && !confirmingDelete && (
+                <button type="button" onClick={() => setConfirmingDelete(true)} className="btn-danger px-3 py-1.5 text-xs">
+                  Delete for good
+                </button>
+              )}
+              {confirmingDelete && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-[var(--muted)]">Delete this cancelled follow-up for good?</span>
+                  <button onClick={deleteForever} disabled={cancelDeleteBusy} className="btn-danger px-2.5 py-1 text-xs">
+                    {cancelDeleteBusy ? "…" : "Yes, delete"}
+                  </button>
+                  <button onClick={() => setConfirmingDelete(false)} disabled={cancelDeleteBusy} className="btn-secondary px-2.5 py-1 text-xs">
+                    Never mind
+                  </button>
+                </div>
+              )}
+
+              {status === "PENDING" && (
+                <>
+                  <input
+                    className="input font-semibold"
+                    value={subjectDraft}
+                    onChange={(e) => setSubjectDraft(e.target.value)}
+                    placeholder="Subject"
+                  />
+                  <textarea
+                    className="input font-sans"
+                    style={{ minHeight: 180, resize: "vertical" }}
+                    value={bodyDraft}
+                    onChange={(e) => setBodyDraft(e.target.value)}
+                    placeholder="Follow-up body"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={save}
+                      disabled={saving || (subjectDraft === data.subject && bodyDraft === data.body)}
+                      className="btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                    >
+                      <Save size={13} /> {saving ? "Saving…" : "Save Edit"}
+                    </button>
+                    {saved && <span className="text-xs" style={{ color: "var(--success-fg)" }}>Saved.</span>}
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>

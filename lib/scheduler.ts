@@ -439,7 +439,13 @@ export async function runContinuousReplyCheck() {
   });
 
   const results = [];
+  const startedAt = Date.now();
   for (const seq of activeSequences) {
+    // Bounded so a growing number of active threads (or a slow Gmail API) can never eat the
+    // whole tick — anything left unchecked this pass just gets picked up on the next one, 5
+    // minutes later. Reply detection tolerates that; a scheduled send does not, which is why
+    // runWorkerTick runs the due-send passes before this one and this one is the one with a cap.
+    if (Date.now() - startedAt > REPLY_CHECK_TIME_BUDGET_MS) break;
     if (seq.emailAccount.accessStatus !== "CONNECTED") continue;
     try {
       const gmail = await gmailClientFor(seq.emailAccountId);
@@ -729,12 +735,18 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// The tick route (app/api/cron/tick) has a 60s ceiling on Vercel. runContinuousReplyCheck runs
-// first with no artificial delay, then these two "due" passes each get a slice of what's left —
-// generous enough for normal traffic, but bounded so a backlog (e.g. the worker having been down
-// for a while) can't make the deliberate anti-burst spacing below run the function past its own
-// timeout, which would silently drop whatever hadn't sent yet instead of cleanly deferring it.
-const TICK_TIME_BUDGET_MS = 25_000;
+// The tick route (app/api/cron/tick) has a 60s ceiling on Vercel. The two due-send passes below
+// each get a slice of the budget — generous enough for normal traffic, but bounded so a backlog
+// (e.g. the worker having been down for a while) can't make the deliberate anti-burst spacing
+// below run the function past its own timeout, which would silently drop whatever hadn't sent
+// yet instead of cleanly deferring it to the next tick.
+const TICK_TIME_BUDGET_MS = 15_000;
+// Reply-checking is best-effort and runs last (see runWorkerTick) specifically so it can never
+// starve a due send of its time slice — a reply noticed 5 minutes late is a non-event; a promised
+// email that silently never goes out is not. Keeping (2 * TICK_TIME_BUDGET_MS) +
+// REPLY_CHECK_TIME_BUDGET_MS comfortably under the 60s ceiling leaves headroom for DB round-trips
+// and Vercel cold-start overhead that isn't captured by the in-process timers.
+const REPLY_CHECK_TIME_BUDGET_MS = 20_000;
 
 /**
  * Polls all due, pending scheduled actions and processes them. Entry point for the worker loop.
@@ -808,14 +820,16 @@ export async function runDueInitialEmails() {
 }
 
 /**
- * The full worker tick: catch replies/manual-sends on every active sequence first (not just ones
- * with a due follow-up), send whatever scheduled Email 1s are now due, then process whatever
- * follow-ups are actually due. This is what scripts/worker.ts calls on each poll.
+ * The full worker tick: send whatever's actually due first — scheduled Email 1s, then follow-ups
+ * — and only then spend whatever's left of the time budget checking active sequences for
+ * replies/manual-sends. Due sends go first on purpose: they're a promise to the team about when
+ * something goes out, while reply-checking is inherently a poll that's fine to pick back up next
+ * tick. This is what scripts/worker.ts calls on each poll.
  */
 export async function runWorkerTick() {
-  const replyResults = await runContinuousReplyCheck();
   const initialEmailResults = await runDueInitialEmails();
   const actionResults = await runDueScheduledActions();
+  const replyResults = await runContinuousReplyCheck();
   return {
     repliesFound: replyResults.length,
     initialEmailsSent: initialEmailResults.length,

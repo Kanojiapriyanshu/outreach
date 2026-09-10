@@ -36,21 +36,23 @@ interface PatchBody {
   subject?: string;
   body?: string;
   reset?: boolean;
-  /** ISO datetime — reschedules this pending action to fire at exactly this moment instead of
-   * whenever it was originally set for. Independent of subject/body editing; either can be sent
-   * alone or together. */
+  /** ISO datetime — reschedules this action to fire at exactly this moment instead of whenever
+   * it was originally set for. Works on a PENDING action (just moves the time) as well as a
+   * CANCELLED one — reopening it as PENDING with a new time is the Gmail-style "reschedule a
+   * cancelled send" flow. Independent of subject/body editing; either can be sent alone or
+   * together. */
   scheduledAt?: string;
 }
 
-/** Saves (or clears) a direct edit of this specific upcoming send — takes over from auto-render.
- * Also handles rescheduling it to a different date/time, independent of the content edit. */
+/** Saves (or clears) a direct edit of this specific upcoming send, reschedules it, and/or
+ * reopens a cancelled one back to pending. */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { subject, body, reset, scheduledAt }: PatchBody = await req.json();
 
   const action = await prisma.scheduledAction.findUnique({ where: { id } });
   if (!action) return NextResponse.json({ error: "Scheduled action not found" }, { status: 404 });
-  if (action.status !== "PENDING") {
+  if (action.status !== "PENDING" && action.status !== "CANCELLED") {
     return NextResponse.json({ error: "This one has already gone out — nothing left to edit" }, { status: 400 });
   }
 
@@ -59,17 +61,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (isNaN(newDate.getTime())) {
       return NextResponse.json({ error: "That date/time didn't parse — try again" }, { status: 400 });
     }
+    const wasCancelled = action.status === "CANCELLED";
     await prisma.$transaction([
-      prisma.scheduledAction.update({ where: { id }, data: { scheduledAt: newDate } }),
+      prisma.scheduledAction.update({ where: { id }, data: { scheduledAt: newDate, status: "PENDING" } }),
       prisma.activityLog.create({
         data: {
           sequenceId: action.sequenceId,
           eventType: "FOLLOW_UP_SCHEDULED",
-          description: `Follow-up #${action.step} rescheduled to ${formatDateTime(newDate)} (picked by hand).`,
+          description: wasCancelled
+            ? `Follow-up #${action.step} reopened and rescheduled to ${formatDateTime(newDate)} (picked by hand).`
+            : `Follow-up #${action.step} rescheduled to ${formatDateTime(newDate)} (picked by hand).`,
         },
       }),
     ]);
     if (!subject && !body && !reset) return NextResponse.json({ ok: true });
+  } else if (action.status === "CANCELLED") {
+    return NextResponse.json({ error: "This follow-up is cancelled — reschedule it before editing its content" }, { status: 400 });
   }
 
   if (reset) {
@@ -85,4 +92,38 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   return NextResponse.json({ ok: true });
+}
+
+/** Gmail-style controls, mirroring /api/scheduled-emails/[id]:
+ *  - PENDING -> DELETE cancels it (no automatic next step gets scheduled — unlike "Skip", which
+ *    deliberately advances the sequence, this just stops the one send and leaves the sequence
+ *    where it is until the team reschedules or takes another manual action).
+ *  - CANCELLED -> DELETE removes the row for good.
+ */
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+
+  const action = await prisma.scheduledAction.findUnique({ where: { id } });
+  if (!action) return NextResponse.json({ error: "Scheduled action not found" }, { status: 404 });
+
+  if (action.status === "PENDING") {
+    await prisma.$transaction([
+      prisma.scheduledAction.update({ where: { id }, data: { status: "CANCELLED" } }),
+      prisma.activityLog.create({
+        data: {
+          sequenceId: action.sequenceId,
+          eventType: "FOLLOW_UP_CANCELLED",
+          description: `Cancelled follow-up #${action.step} — it won't go out unless rescheduled.`,
+        },
+      }),
+    ]);
+    return NextResponse.json({ ok: true, cancelled: true });
+  }
+
+  if (action.status === "CANCELLED") {
+    await prisma.scheduledAction.delete({ where: { id } });
+    return NextResponse.json({ ok: true, deleted: true });
+  }
+
+  return NextResponse.json({ error: "This one has already gone out (or been skipped) — nothing left to cancel or delete" }, { status: 400 });
 }

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime } from "@/lib/formatDate";
-import CancelScheduledEmail from "./CancelScheduledEmail";
+import ScheduledEmailActions from "./ScheduledEmailActions";
 
 // No searchParams/cookies/headers usage here for Next to auto-detect this needs a fresh render
 // per request — without this, it gets prerendered once at build time and would keep showing
@@ -50,7 +50,8 @@ export default async function ScheduledPage() {
         <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Scheduled Emails</h1>
         <p className="text-sm text-[var(--muted)] mt-0.5">
           Every first email you&rsquo;ve told the CRM to send later, in one place — like Gmail&rsquo;s own Scheduled
-          folder. You can cancel anything that hasn&rsquo;t gone out yet.
+          folder. Reschedule or cancel anything that hasn&rsquo;t gone out yet; a cancelled one can still be
+          rescheduled or deleted for good from History below.
         </p>
       </div>
 
@@ -94,7 +95,11 @@ export default async function ScheduledPage() {
                   <td className="px-5 py-3.5 text-[var(--muted)]">{companyOrCreator}</td>
                   <td className="px-5 py-3.5 text-[var(--ink)] whitespace-nowrap">{formatDateTime(s.scheduledAt)}</td>
                   <td className="px-5 py-3.5">
-                    <CancelScheduledEmail scheduledEmailId={s.id} />
+                    <ScheduledEmailActions
+                      scheduledEmailId={s.id}
+                      status={s.status as "PENDING" | "SENT" | "FAILED" | "CANCELLED"}
+                      scheduledAt={s.scheduledAt.toISOString()}
+                    />
                   </td>
                 </tr>
               );
@@ -114,12 +119,13 @@ export default async function ScheduledPage() {
               <th className="px-5 py-3 font-medium text-xs uppercase tracking-wide">Was Scheduled For</th>
               <th className="px-5 py-3 font-medium text-xs uppercase tracking-wide">Status</th>
               <th className="px-5 py-3 font-medium text-xs uppercase tracking-wide">Detail</th>
+              <th className="px-5 py-3 font-medium text-xs uppercase tracking-wide"></th>
             </tr>
           </thead>
           <tbody>
             {history.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-5 py-10 text-center text-[var(--muted-2)] text-sm">
+                <td colSpan={5} className="px-5 py-10 text-center text-[var(--muted-2)] text-sm">
                   No scheduled sends have gone out, failed, or been cancelled yet.
                 </td>
               </tr>
@@ -148,6 +154,15 @@ export default async function ScheduledPage() {
                       s.error
                     ) : (
                       "—"
+                    )}
+                  </td>
+                  <td className="px-5 py-3.5">
+                    {s.status !== "SENT" && (
+                      <ScheduledEmailActions
+                        scheduledEmailId={s.id}
+                        status={s.status as "PENDING" | "SENT" | "FAILED" | "CANCELLED"}
+                        scheduledAt={s.scheduledAt.toISOString()}
+                      />
                     )}
                   </td>
                 </tr>

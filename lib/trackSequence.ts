@@ -3,6 +3,7 @@ import { renderTemplate, variablesForType } from "@/lib/templates";
 import { gmailClientFor, sendInitialEmail } from "@/lib/gmail";
 import { isUnderDailyLimit } from "@/lib/quota";
 import { computeNextScheduledAt } from "@/lib/scheduler";
+import { addCalendarDays, clampToSendingWindow } from "@/lib/businessDays";
 import { MAX_FOLLOW_UPS, type SequenceStatus } from "@/lib/stateMachine";
 import { formatDateTime } from "@/lib/formatDate";
 
@@ -414,7 +415,27 @@ export async function processScheduledInitialEmail(scheduledId: string) {
   const scheduled = await prisma.scheduledInitialEmail.findUnique({ where: { id: scheduledId } });
   if (!scheduled || scheduled.status !== "PENDING") return { skipped: true };
 
-  const result = await composeAndSendInitialEmail(scheduled.payload as unknown as ComposeEmailInput);
+  const payload = scheduled.payload as unknown as ComposeEmailInput;
+
+  // Check the daily quota ourselves before attempting the send, and self-heal by pushing this to
+  // the next sending window instead of letting composeAndSendInitialEmail's generic "reached the
+  // limit" error mark it FAILED below. FAILED is terminal — the worker only ever looks at PENDING
+  // rows — so a scheduled Email 1 that happened to land on a day the account had already hit its
+  // quota would silently never go out, even the next day. processScheduledAction (the follow-up
+  // equivalent) already reschedules-to-tomorrow instead of failing for exactly this reason; this
+  // mirrors that.
+  const emailAccount = await prisma.emailAccount.findUnique({ where: { id: payload.emailAccountId } });
+  if (emailAccount && emailAccount.accessStatus === "CONNECTED") {
+    const underLimit = await isUnderDailyLimit(emailAccount.id, emailAccount.dailySendLimit);
+    if (!underLimit) {
+      const settings = await prisma.automationSettings.findFirstOrThrow();
+      const tomorrow = clampToSendingWindow(addCalendarDays(new Date(), 1), settings);
+      await prisma.scheduledInitialEmail.update({ where: { id: scheduled.id }, data: { scheduledAt: tomorrow } });
+      return { skipped: true, reason: `Daily send limit reached for ${emailAccount.email}; rescheduled to ${formatDateTime(tomorrow)}` };
+    }
+  }
+
+  const result = await composeAndSendInitialEmail(payload);
 
   if (result.ok) {
     await prisma.scheduledInitialEmail.update({

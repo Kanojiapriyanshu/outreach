@@ -30,6 +30,13 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
   if (!sequence) notFound();
 
   const pending = sequence.scheduledActions.find((a) => a.status === "PENDING");
+  // A cancelled follow-up doesn't get replaced by anything automatically (unlike "Skip", which
+  // schedules the next step) — so once one is cancelled, it needs to stay visible/reachable for
+  // reschedule-or-delete, same as a cancelled scheduled Email 1 does on /scheduled.
+  const mostRecentCancelled = !pending
+    ? [...sequence.scheduledActions].filter((a) => a.status === "CANCELLED").sort((a, b) => b.step - a.step)[0]
+    : undefined;
+  const displayedAction = pending ?? mostRecentCancelled;
   const creatorListSent = !PRE_LIST_STAGES.includes(sequence.stage);
   const pendingNudge = pending?.kind === "CREATOR_LIST_NUDGE" ? pending : undefined;
 
@@ -68,12 +75,24 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
           hasPending={!!pending}
           isImportant={sequence.isImportant}
         />
-        {pending && (
+        {displayedAction && (
           <>
             <p className="text-sm text-[var(--muted)] mt-3">
-              Next up: follow-up #{pending.step} on {formatDateTime(pending.scheduledAt)}
+              {displayedAction.status === "CANCELLED" ? (
+                <>
+                  Follow-up #{displayedAction.step} was cancelled — it was going to send on{" "}
+                  {formatDateTime(displayedAction.scheduledAt)}.
+                </>
+              ) : (
+                <>
+                  Next up: follow-up #{displayedAction.step} on {formatDateTime(displayedAction.scheduledAt)}
+                </>
+              )}
             </p>
-            <UpcomingFollowUpPreview scheduledActionId={pending.id} />
+            <UpcomingFollowUpPreview
+              scheduledActionId={displayedAction.id}
+              status={displayedAction.status as "PENDING" | "CANCELLED"}
+            />
           </>
         )}
         <div className="mt-4 pt-4" style={{ borderTop: "1px solid var(--border)" }}>
