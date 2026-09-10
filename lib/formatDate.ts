@@ -27,3 +27,20 @@ export function formatDateTime(date: Date, timeZone: string = BUSINESS_TIMEZONE)
 export function formatDateOnly(date: Date, timeZone: string = BUSINESS_TIMEZONE): string {
   return new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "numeric", day: "numeric" }).format(date);
 }
+
+// Same fixed +5:30 offset trick as lib/businessDays.ts — IST has no DST, so this is exact.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/** The UTC instant for midnight IST on a "YYYY-MM-DD" date string — the inclusive start of that
+ * IST calendar day, for building date-range filters (e.g. a `createdAt: { gte, lte } ` query)
+ * that mean what a user typing a date in a `<input type="date">` picker actually expects. */
+export function istDayStart(dateStr: string): Date {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d) - IST_OFFSET_MS);
+}
+
+/** The UTC instant for the last millisecond of that same IST calendar day — the inclusive end. */
+export function istDayEnd(dateStr: string): Date {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1) - IST_OFFSET_MS - 1);
+}

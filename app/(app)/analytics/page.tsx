@@ -1,5 +1,10 @@
 import { prisma } from "@/lib/prisma";
 
+// No searchParams/cookies/headers here for Next to auto-detect this needs a fresh render per
+// request — without this it gets prerendered once at build time and keeps showing whatever the
+// numbers were then, never reflecting anything that's happened since that deploy.
+export const dynamic = "force-dynamic";
+
 async function metricsFor(outreachType: "BRAND" | "CREATOR") {
   const sequences = await prisma.outreachSequence.findMany({ where: { outreachType } });
   const total = sequences.length;

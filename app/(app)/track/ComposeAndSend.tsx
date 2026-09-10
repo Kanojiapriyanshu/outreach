@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Send, RotateCcw, Trash2 } from "lucide-react";
 import { CREATOR_VARIABLES, renderTemplate } from "@/lib/templates";
 import { variableLabel } from "@/lib/friendlyLabels";
@@ -397,7 +398,14 @@ export default function ComposeAndSend({
             : "Send This Email"}
       </button>
       {error && <p className="text-sm" style={{ color: "var(--danger-fg)" }}>{error}</p>}
-      {scheduledConfirmation && <p className="text-sm" style={{ color: "var(--success-fg)" }}>{scheduledConfirmation}</p>}
+      {scheduledConfirmation && (
+        <p className="text-sm" style={{ color: "var(--success-fg)" }}>
+          {scheduledConfirmation}{" "}
+          <Link href="/scheduled" className="underline font-medium">
+            View all scheduled emails →
+          </Link>
+        </p>
+      )}
     </div>
   );
 }

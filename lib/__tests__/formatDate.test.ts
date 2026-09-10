@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatDateTime, formatDateOnly, BUSINESS_TIMEZONE } from "../formatDate";
+import { formatDateTime, formatDateOnly, istDayStart, istDayEnd, BUSINESS_TIMEZONE } from "../formatDate";
 
 describe("formatDateTime", () => {
   it("renders a UTC instant as the correct wall-clock time in the business timezone (IST, UTC+5:30)", () => {
@@ -22,5 +22,21 @@ describe("formatDateOnly", () => {
     // the same timezone-aware conversion, not just the UTC calendar date.
     const d = new Date("2026-09-09T19:00:00.000Z");
     expect(formatDateOnly(d)).toBe("9/10/2026");
+  });
+});
+
+describe("istDayStart / istDayEnd", () => {
+  it("returns the UTC instants bracketing midnight-to-midnight IST for a date string", () => {
+    // IST midnight on 2026-09-10 is 2026-09-09T18:30:00.000Z
+    expect(istDayStart("2026-09-10").toISOString()).toBe("2026-09-09T18:30:00.000Z");
+    // The last millisecond of that IST day is just before the next day's IST midnight
+    expect(istDayEnd("2026-09-10").toISOString()).toBe("2026-09-10T18:29:59.999Z");
+  });
+
+  it("round-trips through formatDateOnly (a moment inside the range formats back to the same date)", () => {
+    const start = istDayStart("2026-09-10");
+    const end = istDayEnd("2026-09-10");
+    expect(formatDateOnly(start)).toBe("9/10/2026");
+    expect(formatDateOnly(end)).toBe("9/10/2026");
   });
 });

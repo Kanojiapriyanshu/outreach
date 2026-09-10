@@ -1,7 +1,8 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { Plus, ExternalLink } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { formatDateOnly } from "@/lib/formatDate";
+import { formatDateTime, istDayStart, istDayEnd } from "@/lib/formatDate";
 import {
   nextActionLabel,
   companyOrCreatorName,
@@ -10,22 +11,47 @@ import {
   influencerRangeLabel,
 } from "@/lib/display";
 import Badge, { StageBadge } from "@/app/components/Badge";
+import DashboardFilters from "./DashboardFilters";
+import type { Prisma } from "@/app/generated/prisma/client";
 
 type Tab = "all" | "brands" | "creators";
 
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; q?: string; from?: string; to?: string }>;
 }) {
-  const { tab: rawTab } = await searchParams;
+  const { tab: rawTab, q, from, to } = await searchParams;
   const tab: Tab = rawTab === "brands" || rawTab === "creators" ? rawTab : "all";
 
+  const where: Prisma.OutreachSequenceWhereInput = {
+    ...(tab === "brands" ? { outreachType: "BRAND" as const } : tab === "creators" ? { outreachType: "CREATOR" as const } : {}),
+    ...(q?.trim()
+      ? {
+          OR: [
+            { contact: { name: { contains: q, mode: "insensitive" as const } } },
+            { contact: { email: { contains: q, mode: "insensitive" as const } } },
+            { contact: { brand: { name: { contains: q, mode: "insensitive" as const } } } },
+            { contact: { creator: { name: { contains: q, mode: "insensitive" as const } } } },
+          ],
+        }
+      : {}),
+    ...(from || to
+      ? {
+          createdAt: {
+            ...(from ? { gte: istDayStart(from) } : {}),
+            ...(to ? { lte: istDayEnd(to) } : {}),
+          },
+        }
+      : {}),
+  };
+
   const sequences = await prisma.outreachSequence.findMany({
-    where: tab === "brands" ? { outreachType: "BRAND" } : tab === "creators" ? { outreachType: "CREATOR" } : undefined,
+    where,
     include: {
       contact: { include: { brand: true, creator: true } },
       scheduledActions: { where: { status: "PENDING" }, orderBy: { step: "asc" }, take: 1 },
+      messages: { orderBy: { sentAt: "desc" }, take: 1 },
     },
     orderBy: { updatedAt: "desc" },
   });
@@ -65,10 +91,14 @@ export default async function DashboardPage({
       </div>
 
       <div className="flex gap-1">
-        <TabLink tab="all" active={tab === "all"} label="All" />
-        <TabLink tab="brands" active={tab === "brands"} label="Brands" />
-        <TabLink tab="creators" active={tab === "creators"} label="Creators" />
+        <TabLink tab="all" active={tab === "all"} label="All" extraParams={{ q, from, to }} />
+        <TabLink tab="brands" active={tab === "brands"} label="Brands" extraParams={{ q, from, to }} />
+        <TabLink tab="creators" active={tab === "creators"} label="Creators" extraParams={{ q, from, to }} />
       </div>
+
+      <Suspense fallback={<div className="h-10" />}>
+        <DashboardFilters />
+      </Suspense>
 
       <div className="card overflow-hidden overflow-x-auto">
         {tab === "brands" ? (
@@ -85,8 +115,22 @@ type SequenceRow = Awaited<ReturnType<typeof prisma.outreachSequence.findMany<{
   include: {
     contact: { include: { brand: true; creator: true } };
     scheduledActions: true;
+    messages: true;
   };
 }>>>[number];
+
+/** Gmail-style exact last-activity line: who it was (sent/received) and the precise timestamp,
+ * not just a date — matches how Gmail shows the last message time in a thread list. */
+function LastMessageCell({ seq }: { seq: SequenceRow }) {
+  const last = seq.messages[0];
+  if (!last) return <span className="text-[var(--muted-2)]">—</span>;
+  return (
+    <div className="whitespace-nowrap">
+      <div className="text-[var(--ink)]">{formatDateTime(last.sentAt)}</div>
+      <div className="text-[var(--muted-2)] text-xs">{last.direction === "OUT" ? "You sent" : "They replied"}</div>
+    </div>
+  );
+}
 
 function GenericTable({ sequences }: { sequences: SequenceRow[] }) {
   return (
@@ -99,12 +143,13 @@ function GenericTable({ sequences }: { sequences: SequenceRow[] }) {
           <th className="px-5 py-3 font-medium text-xs uppercase tracking-wide">Pipeline Stage</th>
           <th className="px-5 py-3 font-medium text-xs uppercase tracking-wide">Next Action</th>
           <th className="px-5 py-3 font-medium text-xs uppercase tracking-wide">Status</th>
+          <th className="px-5 py-3 font-medium text-xs uppercase tracking-wide">Last Message</th>
         </tr>
       </thead>
       <tbody>
         {sequences.length === 0 && (
           <tr>
-            <td colSpan={6} className="px-5 py-14 text-center text-[var(--muted-2)] text-sm">
+            <td colSpan={7} className="px-5 py-14 text-center text-[var(--muted-2)] text-sm">
               Nothing here yet — click &quot;New Outreach&quot; above to get started.
             </td>
           </tr>
@@ -124,6 +169,9 @@ function GenericTable({ sequences }: { sequences: SequenceRow[] }) {
             <td className="px-5 py-3.5 text-[var(--muted)]">{nextActionLabel(seq.status, seq.scheduledActions[0]?.step)}</td>
             <td className="px-5 py-3.5">
               <Badge status={seq.status} />
+            </td>
+            <td className="px-5 py-3.5 text-sm">
+              <LastMessageCell seq={seq} />
             </td>
           </tr>
         ))}
@@ -197,8 +245,8 @@ function BrandTable({ sequences }: { sequences: SequenceRow[] }) {
               <td className="px-4 py-3.5">
                 <Badge status={seq.status} />
               </td>
-              <td className="px-4 py-3.5 text-[var(--muted-2)] whitespace-nowrap">
-                {formatDateOnly(seq.updatedAt)}
+              <td className="px-4 py-3.5 text-sm">
+                <LastMessageCell seq={seq} />
               </td>
             </tr>
           );
@@ -217,10 +265,24 @@ function StatCard({ label, value }: { label: string; value: number }) {
   );
 }
 
-function TabLink({ tab, active, label }: { tab: Tab; active: boolean; label: string }) {
+function TabLink({
+  tab,
+  active,
+  label,
+  extraParams,
+}: {
+  tab: Tab;
+  active: boolean;
+  label: string;
+  extraParams?: { q?: string; from?: string; to?: string };
+}) {
+  const params = new URLSearchParams({ tab });
+  if (extraParams?.q) params.set("q", extraParams.q);
+  if (extraParams?.from) params.set("from", extraParams.from);
+  if (extraParams?.to) params.set("to", extraParams.to);
   return (
     <Link
-      href={`/dashboard?tab=${tab}`}
+      href={`/dashboard?${params.toString()}`}
       className={`px-4 py-2 text-sm font-medium rounded-full transition-colors ${
         active
           ? "bg-[var(--ink)] text-[var(--ink-inverse)]"

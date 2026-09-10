@@ -3,13 +3,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, SendHorizontal, FileText, BarChart2, Activity, Settings, LogOut, Menu, X } from "lucide-react";
+import { LayoutDashboard, SendHorizontal, Clock, FileText, BarChart2, Activity, Settings, LogOut, Menu, X } from "lucide-react";
 import Logo from "./Logo";
 import ThemeToggle from "./ThemeToggle";
 
 const LINKS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/track", label: "New Outreach", icon: SendHorizontal },
+  { href: "/scheduled", label: "Scheduled", icon: Clock },
   { href: "/templates", label: "Email Templates", icon: FileText },
   { href: "/analytics", label: "Results", icon: BarChart2 },
   { href: "/activity", label: "History", icon: Activity },

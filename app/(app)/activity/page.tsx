@@ -2,6 +2,11 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime } from "@/lib/formatDate";
 
+// No searchParams/cookies/headers here for Next to auto-detect this needs a fresh render per
+// request — without this it gets prerendered once at build time and keeps showing whatever the
+// activity log looked like then, never picking up anything logged after that deploy.
+export const dynamic = "force-dynamic";
+
 export default async function ActivityPage() {
   const logs = await prisma.activityLog.findMany({
     orderBy: { timestamp: "desc" },
