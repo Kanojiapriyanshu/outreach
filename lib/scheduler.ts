@@ -728,11 +728,20 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// The tick route (app/api/cron/tick) has a 60s ceiling on Vercel. runContinuousReplyCheck runs
+// first with no artificial delay, then these two "due" passes each get a slice of what's left —
+// generous enough for normal traffic, but bounded so a backlog (e.g. the worker having been down
+// for a while) can't make the deliberate anti-burst spacing below run the function past its own
+// timeout, which would silently drop whatever hadn't sent yet instead of cleanly deferring it.
+const TICK_TIME_BUDGET_MS = 25_000;
+
 /**
  * Polls all due, pending scheduled actions and processes them. Entry point for the worker loop.
  * Sends are spaced out with a randomized human-like gap (configurable in Settings) instead of
  * firing every due follow-up in the same instant — a burst of identical-looking sends is one of
- * the more obvious "this is a bot" signals to a mail provider.
+ * the more obvious "this is a bot" signals to a mail provider. Stops (leaving the rest for the
+ * next tick — still due, nothing lost) once it's used up its safe slice of this invocation's time
+ * budget, rather than risk the platform killing the function mid-send.
  */
 export async function runDueScheduledActions() {
   const due = await prisma.scheduledAction.findMany({
@@ -742,8 +751,11 @@ export async function runDueScheduledActions() {
 
   const settings = await prisma.automationSettings.findFirstOrThrow();
   const results = [];
+  const startedAt = Date.now();
 
   for (let i = 0; i < due.length; i++) {
+    if (Date.now() - startedAt > TICK_TIME_BUDGET_MS) break;
+
     const result = await processScheduledAction(due[i].id);
     results.push({ actionId: due[i].id, ...result });
 
@@ -751,7 +763,11 @@ export async function runDueScheduledActions() {
       const min = settings.sendSpacingSecondsMin;
       const max = Math.max(min, settings.sendSpacingSecondsMax);
       const gapMs = (min + Math.random() * (max - min)) * 1000;
-      await sleep(gapMs);
+      // Cap the actual sleep to whatever's left in this pass's budget instead of the full
+      // randomized gap — still spaces sends out, just doesn't blow through the function's time
+      // limit when the configured spacing is generous and there's a backlog to work through.
+      const remaining = TICK_TIME_BUDGET_MS - (Date.now() - startedAt);
+      await sleep(Math.max(0, Math.min(gapMs, remaining)));
     }
   }
   return results;
@@ -771,8 +787,11 @@ export async function runDueInitialEmails() {
 
   const settings = await prisma.automationSettings.findFirstOrThrow();
   const results = [];
+  const startedAt = Date.now();
 
   for (let i = 0; i < due.length; i++) {
+    if (Date.now() - startedAt > TICK_TIME_BUDGET_MS) break;
+
     const result = await processScheduledInitialEmail(due[i].id);
     results.push({ scheduledId: due[i].id, ...result });
 
@@ -780,7 +799,8 @@ export async function runDueInitialEmails() {
       const min = settings.sendSpacingSecondsMin;
       const max = Math.max(min, settings.sendSpacingSecondsMax);
       const gapMs = (min + Math.random() * (max - min)) * 1000;
-      await sleep(gapMs);
+      const remaining = TICK_TIME_BUDGET_MS - (Date.now() - startedAt);
+      await sleep(Math.max(0, Math.min(gapMs, remaining)));
     }
   }
   return results;
