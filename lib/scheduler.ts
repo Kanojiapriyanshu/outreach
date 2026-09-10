@@ -434,7 +434,7 @@ async function checkThreadForTerminalEvent(
  */
 export async function runContinuousReplyCheck() {
   const activeSequences = await prisma.outreachSequence.findMany({
-    where: { status: { notIn: DEAD_STATUSES }, stage: { notIn: DEAD_STAGES } },
+    where: { status: { notIn: DEAD_STATUSES }, stage: { notIn: DEAD_STAGES }, deletedAt: null },
     include: { contact: true, emailAccount: true },
   });
 
@@ -547,6 +547,7 @@ export async function processScheduledAction(
 
   // --- Send-protection gate (PRD §45) ---
   if (action.status !== "PENDING") return { skipped: true, reason: "Already processed" };
+  if (seq.deletedAt) return { skipped: true, reason: "Sequence is in Trash" };
   if (seq.status === "PAUSED") return { skipped: true, reason: "Sequence paused" };
   if (
     ["REPLIED", "BOUNCED", "UNSUBSCRIBED", "STOPPED", "COMPLETED"].includes(seq.status)
@@ -745,7 +746,7 @@ const TICK_TIME_BUDGET_MS = 25_000;
  */
 export async function runDueScheduledActions() {
   const due = await prisma.scheduledAction.findMany({
-    where: { status: "PENDING", scheduledAt: { lte: new Date() } },
+    where: { status: "PENDING", scheduledAt: { lte: new Date() }, sequence: { deletedAt: null } },
     orderBy: { scheduledAt: "asc" },
   });
 

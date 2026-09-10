@@ -2,21 +2,26 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Star } from "lucide-react";
 
 export default function SequenceControls({
   sequenceId,
   status,
   hasPending,
+  isImportant,
 }: {
   sequenceId: string;
   status: string;
   hasPending: boolean;
+  isImportant: boolean;
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [important, setImportant] = useState(isImportant);
+  const [starPending, setStarPending] = useState(false);
 
   async function deleteThread() {
     setDeleting(true);
@@ -24,12 +29,32 @@ export default function SequenceControls({
     try {
       const res = await fetch(`/api/sequences/${sequenceId}`, { method: "DELETE" });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Couldn't delete this — try again.");
+      if (!res.ok) throw new Error(data.error ?? "Couldn't move this to Trash — try again.");
       router.push("/dashboard");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't delete this — try again.");
+      setError(e instanceof Error ? e.message : "Couldn't move this to Trash — try again.");
       setDeleting(false);
       setConfirmingDelete(false);
+    }
+  }
+
+  async function toggleStar() {
+    if (starPending) return;
+    setStarPending(true);
+    const next = !important;
+    setImportant(next);
+    try {
+      const res = await fetch(`/api/sequences/${sequenceId}/star`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ important: next }),
+      });
+      if (!res.ok) throw new Error();
+      router.refresh();
+    } catch {
+      setImportant(!next);
+    } finally {
+      setStarPending(false);
     }
   }
 
@@ -57,6 +82,16 @@ export default function SequenceControls({
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
+        <button
+          onClick={toggleStar}
+          disabled={starPending}
+          aria-label={important ? "Unmark as important" : "Mark as important"}
+          className="btn-secondary px-3 py-2 text-sm inline-flex items-center gap-1.5"
+          style={important ? { color: "var(--brand-yellow)" } : undefined}
+        >
+          <Star size={15} fill={important ? "currentColor" : "none"} />
+          {important ? "Important" : "Mark Important"}
+        </button>
         {status === "PAUSED" ? (
           <Btn onClick={() => run("RESUME")} loading={loading === "RESUME"}>
             Resume Follow-Ups
@@ -76,7 +111,7 @@ export default function SequenceControls({
           Send It Now
         </Btn>
         <Btn onClick={() => setConfirmingDelete(true)} variant="danger">
-          Delete Thread
+          Move to Trash
         </Btn>
       </div>
       {error && <p className="text-sm" style={{ color: "var(--danger-fg)" }}>{error}</p>}
@@ -88,17 +123,17 @@ export default function SequenceControls({
           onClick={() => !deleting && setConfirmingDelete(false)}
         >
           <div className="card p-5 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
-            <h3 className="font-semibold text-sm text-[var(--ink)] mb-2">Delete this thread?</h3>
+            <h3 className="font-semibold text-sm text-[var(--ink)] mb-2">Move this thread to Trash?</h3>
             <p className="text-sm text-[var(--muted)] mb-4">
-              This permanently removes its tracked history, messages, and any pending follow-ups from Fidem Growth —
-              it doesn&rsquo;t touch anything in Gmail itself. This can&rsquo;t be undone.
+              Follow-ups stop right away. You can restore it from Trash later, or delete it for good from there —
+              nothing in Gmail itself is ever touched either way.
             </p>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setConfirmingDelete(false)} disabled={deleting} className="btn-secondary px-4 py-2 text-sm">
                 Cancel
               </button>
               <button onClick={deleteThread} disabled={deleting} className="btn-danger px-4 py-2 text-sm">
-                {deleting ? "Deleting…" : "Delete Thread"}
+                {deleting ? "Moving…" : "Move to Trash"}
               </button>
             </div>
           </div>

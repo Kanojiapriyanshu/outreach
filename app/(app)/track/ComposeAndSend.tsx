@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Send, RotateCcw, Trash2 } from "lucide-react";
+import { Send, RotateCcw, Trash2, FileText } from "lucide-react";
 import { CREATOR_VARIABLES, renderTemplate } from "@/lib/templates";
 import { variableLabel } from "@/lib/friendlyLabels";
 import BrandDetailsForm, { EMPTY_BRAND_DETAILS, type BrandDetails } from "./BrandDetailsForm";
@@ -78,11 +78,18 @@ export default function ComposeAndSend({
   connectedAccounts: ConnectedAccount[];
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [draft, setDraft] = useState<DraftState>(EMPTY_DRAFT);
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scheduledConfirmation, setScheduledConfirmation] = useState<string | null>(null);
+  // Set when this compose session started from an explicit, server-saved draft (Drafts page ->
+  // "Continue editing") — tracked so sending successfully can clean that draft row up instead of
+  // leaving a stale duplicate behind once it's no longer just a draft.
+  const [loadedDraftId, setLoadedDraftId] = useState<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [draftSavedConfirmation, setDraftSavedConfirmation] = useState<string | null>(null);
   // Computed once at mount, not on every render — Date.now() is impure and the "earliest you can
   // pick" only needs to be roughly "now," not updated live to the second.
   const [minScheduledAt] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16));
@@ -106,6 +113,24 @@ export default function ComposeAndSend({
     setScheduledConfirmation(null);
   }, [outreachType]);
 
+  // A link from the Drafts page ("Continue editing") arrives as /track?draftId=X — load that
+  // specific server-saved draft over whatever the per-type localStorage autosave had, once.
+  const draftIdParam = searchParams.get("draftId");
+  useEffect(() => {
+    if (!draftIdParam) return;
+    (async () => {
+      try {
+        const res = await fetch(`/api/drafts/${draftIdParam}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setDraft({ ...EMPTY_DRAFT, ...(data.draft.payload as Partial<DraftState>) });
+        setLoadedDraftId(draftIdParam);
+      } catch {
+        // Missing/stale draft link — just leave whatever draft was already loaded.
+      }
+    })();
+  }, [draftIdParam]);
+
   // Skips the very first save-on-load-tick so loading a draft doesn't immediately re-save it
   // (harmless either way, but avoids a redundant write on every mount).
   const isFirstRender = useRef(true);
@@ -128,8 +153,48 @@ export default function ComposeAndSend({
     } catch {
       // ignore
     }
+    // This session started from a server-saved draft and just actually sent/scheduled — it's no
+    // longer a draft, so the saved row would just be a stale duplicate sitting in Drafts forever.
+    if (loadedDraftId) {
+      fetch(`/api/drafts/${loadedDraftId}`, { method: "DELETE" }).catch(() => {});
+      setLoadedDraftId(null);
+    }
     setDraft(EMPTY_DRAFT);
     setScheduledConfirmation(null);
+  }
+
+  async function saveAsDraft() {
+    setSavingDraft(true);
+    setDraftSavedConfirmation(null);
+    try {
+      const body = {
+        outreachType,
+        recipientType,
+        contactEmail: draft.contactEmail,
+        contactName,
+        emailAccountId: emailAccountId || null,
+        payload: draft,
+      };
+      const res = loadedDraftId
+        ? await fetch(`/api/drafts/${loadedDraftId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          })
+        : await fetch("/api/drafts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Couldn't save draft");
+      if (!loadedDraftId) setLoadedDraftId(data.draft.id);
+      setDraftSavedConfirmation("Saved to Drafts.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't save draft");
+    } finally {
+      setSavingDraft(false);
+    }
   }
 
   useEffect(() => {
@@ -383,21 +448,39 @@ export default function ComposeAndSend({
         )}
       </section>
 
-      <button
-        onClick={send}
-        disabled={!canSend}
-        className="btn-primary inline-flex items-center gap-1.5 px-5 py-2.5 text-sm"
-      >
-        <Send size={15} />
-        {sending
-          ? draft.sendTiming === "later"
-            ? "Scheduling…"
-            : "Sending…"
-          : draft.sendTiming === "later"
-            ? "Schedule This Email"
-            : "Send This Email"}
-      </button>
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          onClick={send}
+          disabled={!canSend}
+          className="btn-primary inline-flex items-center gap-1.5 px-5 py-2.5 text-sm"
+        >
+          <Send size={15} />
+          {sending
+            ? draft.sendTiming === "later"
+              ? "Scheduling…"
+              : "Sending…"
+            : draft.sendTiming === "later"
+              ? "Schedule This Email"
+              : "Send This Email"}
+        </button>
+        <button
+          onClick={saveAsDraft}
+          disabled={savingDraft}
+          className="btn-secondary inline-flex items-center gap-1.5 px-4 py-2.5 text-sm"
+        >
+          <FileText size={15} />
+          {savingDraft ? "Saving…" : loadedDraftId ? "Update Draft" : "Save as Draft"}
+        </button>
+      </div>
       {error && <p className="text-sm" style={{ color: "var(--danger-fg)" }}>{error}</p>}
+      {draftSavedConfirmation && (
+        <p className="text-sm" style={{ color: "var(--success-fg)" }}>
+          {draftSavedConfirmation}{" "}
+          <Link href="/drafts" className="underline font-medium">
+            View all drafts →
+          </Link>
+        </p>
+      )}
       {scheduledConfirmation && (
         <p className="text-sm" style={{ color: "var(--success-fg)" }}>
           {scheduledConfirmation}{" "}

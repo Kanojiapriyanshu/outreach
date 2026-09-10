@@ -3,17 +3,35 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, SendHorizontal, Clock, FileText, BarChart2, Activity, Settings, LogOut, Menu, X } from "lucide-react";
+import {
+  LayoutDashboard,
+  SendHorizontal,
+  Clock,
+  Inbox,
+  FileEdit,
+  Trash2,
+  FileText,
+  BarChart2,
+  Activity,
+  Settings,
+  LogOut,
+  Menu,
+  X,
+} from "lucide-react";
 import Logo from "./Logo";
 import ThemeToggle from "./ThemeToggle";
+import NotificationsBell from "./NotificationsBell";
 
 const LINKS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/track", label: "New Outreach", icon: SendHorizontal },
+  { href: "/sent", label: "Sent", icon: Inbox },
   { href: "/scheduled", label: "Scheduled", icon: Clock },
+  { href: "/drafts", label: "Drafts", icon: FileEdit },
   { href: "/templates", label: "Email Templates", icon: FileText },
   { href: "/analytics", label: "Results", icon: BarChart2 },
   { href: "/activity", label: "History", icon: Activity },
+  { href: "/trash", label: "Trash", icon: Trash2 },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -71,9 +89,12 @@ export default function Nav() {
     <>
       {/* Desktop sidebar — unchanged, always visible at md and up */}
       <aside className="hidden md:flex w-60 shrink-0 border-r border-[var(--border)] bg-[var(--surface)] flex-col h-screen sticky top-0">
-        <div className="flex items-center gap-2 px-5 h-16 border-b border-[var(--border)]">
-          <Logo size={26} />
-          <span className="font-semibold text-[15px] tracking-tight text-[var(--ink)]">Fidem Growth</span>
+        <div className="flex items-center justify-between gap-2 px-5 h-16 border-b border-[var(--border)]">
+          <div className="flex items-center gap-2 min-w-0">
+            <Logo size={26} />
+            <span className="font-semibold text-[15px] tracking-tight text-[var(--ink)] truncate">Fidem Growth</span>
+          </div>
+          <NotificationsBell />
         </div>
         <NavLinks />
         {footer}
@@ -85,13 +106,16 @@ export default function Nav() {
           <Logo size={22} />
           <span className="font-semibold text-[14px] tracking-tight text-[var(--ink)]">Fidem Growth</span>
         </div>
-        <button
-          onClick={() => setDrawerOpen(true)}
-          aria-label="Open menu"
-          className="p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)]"
-        >
-          <Menu size={22} />
-        </button>
+        <div className="flex items-center gap-1">
+          <NotificationsBell />
+          <button
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Open menu"
+            className="p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)]"
+          >
+            <Menu size={22} />
+          </button>
+        </div>
       </div>
 
       {drawerOpen && (

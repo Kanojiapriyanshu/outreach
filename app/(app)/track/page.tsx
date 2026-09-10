@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Search } from "lucide-react";
 import { CREATOR_VARIABLES } from "@/lib/templates";
 import { variableLabel } from "@/lib/friendlyLabels";
@@ -63,7 +63,16 @@ function loadAttachDraft(): AttachDraft {
 }
 
 export default function TrackPage() {
+  return (
+    <Suspense fallback={null}>
+      <TrackPageInner />
+    </Suspense>
+  );
+}
+
+function TrackPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [mode, setMode] = useState<AttachDraft["mode"]>("compose");
   const [outreachType, setOutreachType] = useState<"BRAND" | "CREATOR">("BRAND");
   const [contactEmail, setContactEmail] = useState("");
@@ -113,6 +122,16 @@ export default function TrackPage() {
     setChannelUrl(d.channelUrl);
     setVariables(d.variables);
     setStartingStep(d.startingStep);
+
+    // Arriving from the Drafts page ("Continue editing") — force Write & Send with the right
+    // outreach type so the draft (loaded inside ComposeAndSend itself, keyed off the same
+    // draftId param) lands on a matching, visible form instead of possibly the wrong tab.
+    const draftOutreachType = searchParams.get("outreachType");
+    if (draftOutreachType === "BRAND" || draftOutreachType === "CREATOR") {
+      setMode("compose");
+      setOutreachType(draftOutreachType);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Save on every change, skipping the very first tick (that's the restore above, not a real

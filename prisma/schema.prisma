@@ -143,6 +143,10 @@ enum ActivityEventType {
   MANUAL_MESSAGE_DETECTED
   GENERIC_REPLY_DETECTED
   STAGE_CHANGED
+  MOVED_TO_TRASH
+  RESTORED_FROM_TRASH
+  MARKED_IMPORTANT
+  UNMARKED_IMPORTANT
 }
 
 model User {
@@ -237,6 +241,13 @@ model OutreachSequence {
    * by hand from the dashboard as a manual backstop, and cleared automatically when a fresh
    * creator list goes out for a new round. */
   creatorListResponseAt DateTime?
+  /** Gmail-style star — a manual "don't lose track of this one" flag, independent of pipeline
+   * stage or status. */
+  isImportant       Boolean        @default(false)
+  /** Soft-delete (Trash) — set when the team deletes a thread from the CRM; the worker stops
+   * touching it (no more reply checks or scheduled sends) but the row and its history stay until
+   * a separate permanent delete. Null = not in Trash. */
+  deletedAt         DateTime?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 
@@ -245,6 +256,31 @@ model OutreachSequence {
   activityLogs     ActivityLog[]
 
   @@unique([emailAccountId, threadId])
+  @@index([deletedAt])
+  @@index([isImportant])
+}
+
+/**
+ * A composed-but-not-yet-sent Email 1, saved for later — Gmail's own Drafts folder. Distinct from
+ * ScheduledInitialEmail (which has committed to a specific send time); a draft has neither sent
+ * nor been scheduled yet, and is only ever turned into one or the other by resuming it in the
+ * compose flow.
+ */
+model Draft {
+  id            String        @id @default(cuid())
+  outreachType  OutreachType
+  recipientType RecipientType @default(DIRECT)
+  contactEmail  String        @default("")
+  contactName   String        @default("")
+  emailAccountId String?
+  /** The rest of the compose form, as typed — brand/creator details, subject/body overrides,
+   * template variables. Same shape as ComposeEmailInput; stored as-is since a draft is inherently
+   * partial/unvalidated (that's the point — it doesn't have to be ready to send yet). */
+  payload       Json          @default("{}")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([updatedAt])
 }
 
 /**

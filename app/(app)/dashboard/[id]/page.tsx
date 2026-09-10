@@ -7,6 +7,7 @@ import SequenceControls from "./SequenceControls";
 import StageControl from "./StageControl";
 import UpcomingFollowUpPreview from "./UpcomingFollowUpPreview";
 import CreatorListResponseControl from "./CreatorListResponseControl";
+import TrashBanner from "./TrashBanner";
 
 // A brand only enters this part of the pipeline once the creator shortlist has actually gone
 // out — mirrors PRE_LIST_STAGES in lib/scheduler.ts.
@@ -57,9 +58,16 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
         </div>
       </div>
 
+      {sequence.deletedAt && <TrashBanner sequenceId={sequence.id} deletedAt={sequence.deletedAt.toISOString()} />}
+
       <div className="card p-5">
         <h2 className="font-semibold text-sm mb-3.5 text-[var(--ink)]">Actions</h2>
-        <SequenceControls sequenceId={sequence.id} status={sequence.status} hasPending={!!pending} />
+        <SequenceControls
+          sequenceId={sequence.id}
+          status={sequence.status}
+          hasPending={!!pending}
+          isImportant={sequence.isImportant}
+        />
         {pending && (
           <>
             <p className="text-sm text-[var(--muted)] mt-3">

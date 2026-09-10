@@ -12,19 +12,32 @@ import {
 } from "@/lib/display";
 import Badge, { StageBadge } from "@/app/components/Badge";
 import DashboardFilters from "./DashboardFilters";
+import StarToggle from "./StarToggle";
 import type { Prisma } from "@/app/generated/prisma/client";
 
 type Tab = "all" | "brands" | "creators";
+const PAGE_SIZE = 50;
 
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; q?: string; from?: string; to?: string }>;
+  searchParams: Promise<{
+    tab?: string;
+    q?: string;
+    from?: string;
+    to?: string;
+    stage?: string;
+    starred?: string;
+    repliedAfterList?: string;
+    page?: string;
+  }>;
 }) {
-  const { tab: rawTab, q, from, to } = await searchParams;
+  const { tab: rawTab, q, from, to, stage, starred, repliedAfterList, page: rawPage } = await searchParams;
   const tab: Tab = rawTab === "brands" || rawTab === "creators" ? rawTab : "all";
+  const page = Math.max(1, Number(rawPage) || 1);
 
   const where: Prisma.OutreachSequenceWhereInput = {
+    deletedAt: null,
     ...(tab === "brands" ? { outreachType: "BRAND" as const } : tab === "creators" ? { outreachType: "CREATOR" as const } : {}),
     ...(q?.trim()
       ? {
@@ -44,26 +57,38 @@ export default async function DashboardPage({
           },
         }
       : {}),
+    ...(stage ? { stage: stage as Prisma.EnumPipelineStageFilter["equals"] } : {}),
+    ...(starred === "1" ? { isImportant: true } : {}),
+    ...(repliedAfterList === "1" ? { creatorListResponseAt: { not: null } } : {}),
   };
 
-  const sequences = await prisma.outreachSequence.findMany({
-    where,
-    include: {
-      contact: { include: { brand: true, creator: true } },
-      scheduledActions: { where: { status: "PENDING" }, orderBy: { step: "asc" }, take: 1 },
-      messages: { orderBy: { sentAt: "desc" }, take: 1 },
-    },
-    orderBy: { updatedAt: "desc" },
-  });
+  const [totalCount, statsRows, sequences] = await Promise.all([
+    prisma.outreachSequence.count({ where }),
+    prisma.outreachSequence.findMany({
+      where,
+      select: { status: true, scheduledActions: { where: { status: "PENDING" }, select: { scheduledAt: true }, take: 1 } },
+    }),
+    prisma.outreachSequence.findMany({
+      where,
+      include: {
+        contact: { include: { brand: true, creator: true } },
+        scheduledActions: { where: { status: "PENDING" }, orderBy: { step: "asc" }, take: 1 },
+        messages: { orderBy: { sentAt: "desc" }, take: 1 },
+      },
+      orderBy: { updatedAt: "desc" },
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+    }),
+  ]);
 
-  const dueToday = sequences.filter((s) => {
+  const dueToday = statsRows.filter((s) => {
     const next = s.scheduledActions[0];
     if (!next) return false;
     const today = new Date();
     return next.scheduledAt.toDateString() === today.toDateString();
   }).length;
 
-  const activeCount = sequences.filter((s) =>
+  const activeCount = statsRows.filter((s) =>
     ["WAITING_FOR_REPLY", "FOLLOW_UP_1_SENT", "FOLLOW_UP_2_SENT", "FOLLOW_UP_3_SENT", "PAUSED"].includes(s.status)
   ).length;
 
@@ -87,13 +112,23 @@ export default async function DashboardPage({
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard label="In Progress" value={activeCount} />
         <StatCard label="Due Today" value={dueToday} />
-        <StatCard label="Total Contacted" value={sequences.length} />
+        <StatCard label="Total Contacted" value={totalCount} />
       </div>
 
       <div className="flex gap-1">
-        <TabLink tab="all" active={tab === "all"} label="All" extraParams={{ q, from, to }} />
-        <TabLink tab="brands" active={tab === "brands"} label="Brands" extraParams={{ q, from, to }} />
-        <TabLink tab="creators" active={tab === "creators"} label="Creators" extraParams={{ q, from, to }} />
+        <TabLink tab="all" active={tab === "all"} label="All" extraParams={{ q, from, to, stage, starred, repliedAfterList }} />
+        <TabLink
+          tab="brands"
+          active={tab === "brands"}
+          label="Brands"
+          extraParams={{ q, from, to, stage, starred, repliedAfterList }}
+        />
+        <TabLink
+          tab="creators"
+          active={tab === "creators"}
+          label="Creators"
+          extraParams={{ q, from, to, stage, starred, repliedAfterList }}
+        />
       </div>
 
       <Suspense fallback={<div className="h-10" />}>
@@ -107,6 +142,8 @@ export default async function DashboardPage({
           <GenericTable sequences={sequences} />
         )}
       </div>
+
+      <PaginationBar page={page} pageSize={PAGE_SIZE} totalCount={totalCount} extraParams={{ tab, q, from, to, stage, starred, repliedAfterList }} />
     </div>
   );
 }
@@ -157,9 +194,12 @@ function GenericTable({ sequences }: { sequences: SequenceRow[] }) {
         {sequences.map((seq) => (
           <tr key={seq.id} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg)] transition-colors">
             <td className="px-5 py-3.5">
-              <Link href={`/dashboard/${seq.id}`} className="font-medium text-[var(--ink)] hover:text-[var(--brand-teal)]">
-                {seq.contact.name}
-              </Link>
+              <div className="flex items-center gap-2">
+                <StarToggle sequenceId={seq.id} initialImportant={seq.isImportant} />
+                <Link href={`/dashboard/${seq.id}`} className="font-medium text-[var(--ink)] hover:text-[var(--brand-teal)]">
+                  {seq.contact.name}
+                </Link>
+              </div>
             </td>
             <td className="px-5 py-3.5 text-[var(--muted)]">{seq.outreachType === "BRAND" ? "Brand" : "Creator"}</td>
             <td className="px-5 py-3.5 text-[var(--muted)]">{companyOrCreatorName(seq.contact)}</td>
@@ -211,14 +251,17 @@ function BrandTable({ sequences }: { sequences: SequenceRow[] }) {
             <tr key={seq.id} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg)] transition-colors">
               <td className="px-4 py-3.5 text-[var(--muted-2)]">{i + 1}</td>
               <td className="px-4 py-3.5">
-                <Link href={`/dashboard/${seq.id}`} className="font-medium text-[var(--ink)] hover:text-[var(--brand-teal)]">
-                  {brand?.name ?? "—"}
-                </Link>
-                {brand?.isAgency && (
-                  <span className="badge ml-2" style={{ background: "var(--info-bg)", color: "var(--info-fg)" }}>
-                    Agency
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  <StarToggle sequenceId={seq.id} initialImportant={seq.isImportant} />
+                  <Link href={`/dashboard/${seq.id}`} className="font-medium text-[var(--ink)] hover:text-[var(--brand-teal)]">
+                    {brand?.name ?? "—"}
+                  </Link>
+                  {brand?.isAgency && (
+                    <span className="badge" style={{ background: "var(--info-bg)", color: "var(--info-fg)" }}>
+                      Agency
+                    </span>
+                  )}
+                </div>
               </td>
               <td className="px-4 py-3.5 text-[var(--muted)]">{brand?.category ?? "—"}</td>
               <td className="px-4 py-3.5 text-[var(--muted)]">{seq.contact.email}</td>
@@ -265,6 +308,14 @@ function StatCard({ label, value }: { label: string; value: number }) {
   );
 }
 
+function buildQuery(extraParams: Record<string, string | undefined>, overrides: Record<string, string> = {}) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries({ ...extraParams, ...overrides })) {
+    if (value) params.set(key, value);
+  }
+  return params.toString();
+}
+
 function TabLink({
   tab,
   active,
@@ -274,15 +325,11 @@ function TabLink({
   tab: Tab;
   active: boolean;
   label: string;
-  extraParams?: { q?: string; from?: string; to?: string };
+  extraParams: Record<string, string | undefined>;
 }) {
-  const params = new URLSearchParams({ tab });
-  if (extraParams?.q) params.set("q", extraParams.q);
-  if (extraParams?.from) params.set("from", extraParams.from);
-  if (extraParams?.to) params.set("to", extraParams.to);
   return (
     <Link
-      href={`/dashboard?${params.toString()}`}
+      href={`/dashboard?${buildQuery(extraParams, { tab })}`}
       className={`px-4 py-2 text-sm font-medium rounded-full transition-colors ${
         active
           ? "bg-[var(--ink)] text-[var(--ink-inverse)]"
@@ -291,5 +338,48 @@ function TabLink({
     >
       {label}
     </Link>
+  );
+}
+
+/** Gmail-style "1-50 of 251" pager. */
+function PaginationBar({
+  page,
+  pageSize,
+  totalCount,
+  extraParams,
+}: {
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  extraParams: Record<string, string | undefined>;
+}) {
+  if (totalCount === 0) return null;
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalCount);
+  const hasPrev = page > 1;
+  const hasNext = end < totalCount;
+
+  return (
+    <div className="flex items-center justify-between gap-3 flex-wrap text-sm">
+      <span className="text-[var(--muted)]">
+        {start}–{end} of {totalCount}
+      </span>
+      <div className="flex gap-2">
+        <Link
+          href={`/dashboard?${buildQuery(extraParams, { page: String(page - 1) })}`}
+          aria-disabled={!hasPrev}
+          className={`btn-secondary px-3 py-1.5 text-xs ${!hasPrev ? "pointer-events-none opacity-40" : ""}`}
+        >
+          ← Newer
+        </Link>
+        <Link
+          href={`/dashboard?${buildQuery(extraParams, { page: String(page + 1) })}`}
+          aria-disabled={!hasNext}
+          className={`btn-secondary px-3 py-1.5 text-xs ${!hasNext ? "pointer-events-none opacity-40" : ""}`}
+        >
+          Older →
+        </Link>
+      </div>
+    </div>
   );
 }

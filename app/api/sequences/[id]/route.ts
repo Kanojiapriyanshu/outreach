@@ -20,25 +20,24 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 /**
- * Permanently deletes a tracked sequence and everything under it (messages, scheduled
- * follow-ups, activity log) — nothing in Gmail itself is touched. The main reason to reach for
- * this: re-attaching the same Gmail thread while an old (stopped/paused) sequence for it still
- * exists just returns that old one as a duplicate instead of starting fresh — deleting it first
- * clears the way. Leaves the Contact/Brand/Creator rows behind rather than cascading further;
- * they're harmless once nothing points at them, and safer than guessing whether something else
- * might still reference them.
+ * Moves a tracked sequence to Trash (soft delete) — like Gmail, deleting doesn't destroy
+ * anything right away. The worker stops touching it immediately (see deletedAt checks in
+ * lib/scheduler.ts) but the row and its full history stay until either restored or permanently
+ * deleted from the Trash view. Nothing in Gmail itself is ever touched by this — see
+ * app/(app)/trash/page.tsx for why "delete from Gmail too" isn't something this button does.
  */
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
   const sequence = await prisma.outreachSequence.findUnique({ where: { id } });
   if (!sequence) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (sequence.deletedAt) return NextResponse.json({ ok: true }); // already in Trash
 
   await prisma.$transaction([
-    prisma.activityLog.deleteMany({ where: { sequenceId: id } }),
-    prisma.scheduledAction.deleteMany({ where: { sequenceId: id } }),
-    prisma.emailMessage.deleteMany({ where: { sequenceId: id } }),
-    prisma.outreachSequence.delete({ where: { id } }),
+    prisma.outreachSequence.update({ where: { id }, data: { deletedAt: new Date() } }),
+    prisma.activityLog.create({
+      data: { sequenceId: id, eventType: "MOVED_TO_TRASH", description: "Moved to Trash." },
+    }),
   ]);
 
   return NextResponse.json({ ok: true });
