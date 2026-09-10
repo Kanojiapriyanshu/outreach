@@ -94,7 +94,11 @@ export default function Nav() {
             <Logo size={26} />
             <span className="font-semibold text-[15px] tracking-tight text-[var(--ink)] truncate">Fidem Growth</span>
           </div>
-          <NotificationsBell />
+          {/* The sidebar itself is only 240px wide, narrower than the dropdown panel — right-
+              aligning it to the bell (the default, correct for the mobile top bar below) would
+              push it off-screen to the left, so here it opens left-aligned instead, extending
+              rightward into the main content area where there's actually room. */}
+          <NotificationsBell align="left" />
         </div>
         <NavLinks />
         {footer}

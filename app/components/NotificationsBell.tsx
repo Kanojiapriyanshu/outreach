@@ -53,7 +53,7 @@ function setTitleBadge(count: number) {
  * /api/notifications' `since` param) so a batch landing all at once still shows its real total
  * instead of being silently capped by the display lists.
  */
-export default function NotificationsBell() {
+export default function NotificationsBell({ align = "right" }: { align?: "left" | "right" }) {
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [inboxAlerts, setInboxAlerts] = useState<InboxAlert[]>([]);
@@ -141,7 +141,7 @@ export default function NotificationsBell() {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
-            className="absolute left-0 md:left-auto md:right-0 top-full mt-2 w-80 max-w-[90vw] max-h-[28rem] overflow-y-auto card p-2 z-50 shadow-xl"
+            className={`absolute ${align === "left" ? "left-0" : "right-0"} top-full mt-2 w-80 max-w-[90vw] max-h-[28rem] overflow-y-auto card p-2 z-50 shadow-xl`}
             style={{ boxShadow: "var(--shadow-card)" }}
           >
             {inboxAlerts.length > 0 && (
