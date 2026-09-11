@@ -513,3 +513,50 @@ model AutomationSettings {
   nonCommittalDelayDays Int      @default(2)
   updatedAt             DateTime @updatedAt
 }
+
+/**
+ * A generated Insight OS report for a single YouTube video.
+ *
+ * The report itself is a deeply nested document (hero stats, comment intelligence, estimates, AI
+ * verdict) that nothing ever queries *into* — it's written once and rendered whole. So it lives in
+ * a JSON column rather than being shredded across dozens of relational tables. The handful of
+ * fields the reports list sorts and displays are lifted into real columns so that view doesn't
+ * have to parse every document to draw a table.
+ */
+model InsightReport {
+  id             String    @id @default(cuid())
+  videoId        String
+  videoUrl       String
+  videoTitle     String
+  channelId      String
+  channelTitle   String
+  thumbnailUrl   String?
+  viewCount      Int       @default(0)
+  engagementRate Float     @default(0)
+  /** The engine's overall 0-100 score, shown as "AI Score" in the reports list. */
+  finalScore     Float     @default(0)
+  verdict        String?
+  publishedAt    DateTime?
+  data           Json
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  shares InsightReportShare[]
+
+  @@index([createdAt])
+  @@index([videoId])
+  @@index([channelId])
+}
+
+/** A no-login link to one report. The token is the access control, so it's random and unique. */
+model InsightReportShare {
+  id        String        @id @default(cuid())
+  token     String        @unique
+  reportId  String
+  report    InsightReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+  /** Set to withdraw a link that's already been sent out, without deleting the report. */
+  revokedAt DateTime?
+
+  @@index([reportId])
+}

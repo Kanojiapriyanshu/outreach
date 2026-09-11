@@ -11,6 +11,10 @@ const PUBLIC_PATHS = [
   // Not actually "public" — gated by its own CRON_SECRET check inside the route instead of a
   // session cookie, since the caller is an external scheduler (GitHub Actions), not a browser.
   "/api/cron/tick",
+  // Shared Insight OS reports. The unguessable token in the URL is the access control — these are
+  // sent to brands, who have no login here. Revoking a link is handled inside the route.
+  "/api/insights/public",
+  "/insights/shared",
 ];
 
 export async function middleware(req: NextRequest) {
