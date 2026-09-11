@@ -2,9 +2,15 @@ import { google } from "googleapis";
 import type { gmail_v1 } from "googleapis";
 import { prisma } from "@/lib/prisma";
 
+// gmail.modify covers send + read *and* label changes, which is what makes the in-app inbox a
+// real inbox rather than a read-only mirror: marking something read here marks it read in Gmail,
+// archiving here archives there, and starring stays in sync both directions. gmail.readonly is
+// kept alongside it so an account authorized before this change keeps working (read-only, with
+// local-only state) until it's reconnected in Settings.
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/userinfo.email",
 ];
 
@@ -260,6 +266,185 @@ export async function getInboxMessageMetadata(gmail: gmail_v1.Gmail, messageId: 
     snippet: res.data.snippet ?? "",
     internalDate: res.data.internalDate ? new Date(Number(res.data.internalDate)) : new Date(),
   };
+}
+
+export interface SyncedThreadMessage {
+  gmailMessageId: string;
+  from: string;
+  to: string;
+  cc: string;
+  subject: string;
+  snippet: string;
+  bodyText: string;
+  bodyHtml: string | null;
+  sentAt: Date;
+}
+
+export interface SyncedThread {
+  gmailThreadId: string;
+  labelIds: string[];
+  messages: SyncedThreadMessage[];
+}
+
+/**
+ * Pulls a conversation for the inbox mirror. `withBodies` is the difference between the two very
+ * different jobs this does: syncing the list (metadata only — fast, small, runs constantly) and
+ * opening a thread to read it (full bodies — fetched once, then cached). Fetching bodies during
+ * sync is what would make a large mailbox impossible to keep mirrored.
+ *
+ * Label ids are collected across the thread's messages, since Gmail stores them per-message and a
+ * thread counts as unread/starred/in-inbox if any message in it is.
+ */
+export async function getThreadForInbox(
+  gmail: gmail_v1.Gmail,
+  threadId: string,
+  { withBodies = false }: { withBodies?: boolean } = {}
+): Promise<SyncedThread> {
+  const res = await gmail.users.threads.get({
+    userId: "me",
+    id: threadId,
+    ...(withBodies
+      ? { format: "full" }
+      : { format: "metadata", metadataHeaders: ["From", "To", "Cc", "Subject", "Date"] }),
+  });
+  const messages = res.data.messages ?? [];
+  const labelIds = new Set<string>();
+  for (const m of messages) for (const l of m.labelIds ?? []) labelIds.add(l);
+
+  return {
+    gmailThreadId: threadId,
+    labelIds: [...labelIds],
+    messages: messages.map((m) => ({
+      gmailMessageId: m.id!,
+      from: decodeHeaderValue(m.payload?.headers, "From"),
+      to: decodeHeaderValue(m.payload?.headers, "To"),
+      cc: decodeHeaderValue(m.payload?.headers, "Cc"),
+      subject: decodeHeaderValue(m.payload?.headers, "Subject"),
+      snippet: m.snippet ?? "",
+      bodyText: withBodies ? extractPlainTextFromPayload(m.payload) : "",
+      bodyHtml: withBodies ? extractHtmlFromPayload(m.payload) : null,
+      sentAt: m.internalDate ? new Date(Number(m.internalDate)) : new Date(),
+    })),
+  };
+}
+
+/** Raw HTML part of a message, kept so the reading pane can render mail as it was actually sent
+ * instead of a flattened text approximation. Sanitized at render time, never trusted as-is. */
+function extractHtmlFromPayload(payload: gmail_v1.Schema$MessagePart | undefined): string | null {
+  if (!payload) return null;
+  let html: string | null = null;
+  function walk(part: gmail_v1.Schema$MessagePart) {
+    if (part.mimeType === "text/html" && part.body?.data && html === null) {
+      html = base64UrlDecode(part.body.data);
+    }
+    for (const child of part.parts ?? []) walk(child);
+  }
+  walk(payload);
+  return html;
+}
+
+/** Lists thread ids in a Gmail query, newest first — the bounded full-sync path. */
+export async function listThreadIds(
+  gmail: gmail_v1.Gmail,
+  q: string,
+  maxResults: number
+): Promise<string[]> {
+  const res = await gmail.users.threads.list({ userId: "me", q, maxResults });
+  return (res.data.threads ?? []).map((t) => t.id!);
+}
+
+/** Gmail's current change cursor for this mailbox. */
+export async function getCurrentHistoryId(gmail: gmail_v1.Gmail): Promise<string | null> {
+  const res = await gmail.users.getProfile({ userId: "me" });
+  return res.data.historyId ?? null;
+}
+
+/**
+ * Thread ids touched since `startHistoryId`. This is the incremental path that keeps sync cost
+ * proportional to what actually changed rather than to mailbox size. Returns null when Gmail
+ * rejects the cursor as too old (it expires after roughly a week), which tells the caller to fall
+ * back to a bounded full list.
+ */
+export async function listChangedThreadIds(
+  gmail: gmail_v1.Gmail,
+  startHistoryId: string
+): Promise<{ threadIds: string[]; newHistoryId: string | null } | null> {
+  try {
+    const threadIds = new Set<string>();
+    let pageToken: string | undefined;
+    let newHistoryId: string | null = null;
+
+    do {
+      const res = await gmail.users.history.list({
+        userId: "me",
+        startHistoryId,
+        maxResults: 500,
+        pageToken,
+      });
+      for (const h of res.data.history ?? []) {
+        for (const group of [h.messagesAdded, h.messagesDeleted]) {
+          for (const item of group ?? []) if (item.message?.threadId) threadIds.add(item.message.threadId);
+        }
+        for (const group of [h.labelsAdded, h.labelsRemoved]) {
+          for (const item of group ?? []) if (item.message?.threadId) threadIds.add(item.message.threadId);
+        }
+      }
+      newHistoryId = res.data.historyId ?? newHistoryId;
+      pageToken = res.data.nextPageToken ?? undefined;
+    } while (pageToken);
+
+    return { threadIds: [...threadIds], newHistoryId };
+  } catch (err) {
+    const status = (err as { code?: number; status?: number })?.code ?? (err as { status?: number })?.status;
+    if (status === 404 || status === 400) return null; // cursor expired — caller does a full sync
+    throw err;
+  }
+}
+
+/** Adds/removes Gmail labels on every message in a thread — how read, starred, archived and
+ * trashed state written in this app reaches the real mailbox. Requires the gmail.modify scope. */
+export async function modifyThreadLabels(
+  gmail: gmail_v1.Gmail,
+  threadId: string,
+  { add = [], remove = [] }: { add?: string[]; remove?: string[] }
+): Promise<void> {
+  await gmail.users.threads.modify({
+    userId: "me",
+    id: threadId,
+    requestBody: { addLabelIds: add, removeLabelIds: remove },
+  });
+}
+
+/** Sends a reply into an existing thread, preserving the headers that keep it in the same
+ * conversation for the recipient's client rather than starting a new one. */
+export async function sendReplyInThread(
+  gmail: gmail_v1.Gmail,
+  params: {
+    threadId: string;
+    to: string;
+    cc?: string;
+    subject: string;
+    body: string;
+    inReplyToMessageId: string;
+    references: string;
+  }
+): Promise<{ id: string; threadId: string }> {
+  const headers = [
+    `To: ${params.to}`,
+    ...(params.cc ? [`Cc: ${params.cc}`] : []),
+    `Subject: ${params.subject}`,
+    `In-Reply-To: ${params.inReplyToMessageId}`,
+    `References: ${params.references || params.inReplyToMessageId}`,
+    "Content-Type: text/plain; charset=UTF-8",
+    "MIME-Version: 1.0",
+  ].join("\r\n");
+
+  const raw = base64UrlEncode(`${headers}\r\n\r\n${params.body}`);
+  const res = await gmail.users.messages.send({
+    userId: "me",
+    requestBody: { raw, threadId: params.threadId },
+  });
+  return { id: res.data.id!, threadId: res.data.threadId! };
 }
 
 /** Splits a "From" header ("Jane Doe <jane@brand.com>") into name and address — the address is

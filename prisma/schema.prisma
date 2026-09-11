@@ -175,37 +175,86 @@ model EmailAccount {
   dailySendLimit  Int               @default(450)
   createdAt       DateTime          @default(now())
 
-  sequences   OutreachSequence[]
-  inboxAlerts InboxAlert[]
+  /** Gmail's own change cursor. Incremental syncs ask Gmail "what changed since this point"
+   * instead of re-listing the mailbox, which is what keeps sync cost flat as the mailbox grows.
+   * Gmail expires these after about a week, so the sync falls back to a bounded full list when
+   * it's missing or rejected. */
+  lastHistoryId String?
+  inboxSyncedAt DateTime?
+  /** Scopes Google actually granted at connect time. Stored so the app can tell the difference
+   * between "two-way inbox sync is off" and "it's broken" — an account connected before
+   * gmail.modify was requested keeps working read-only until it's reconnected, and this is what
+   * lets the UI say so plainly instead of failing silently. */
+  grantedScopes String?   @db.Text
+
+  sequences    OutreachSequence[]
+  inboxThreads InboxThread[]
 }
 
 /**
- * A new inbound Gmail message that doesn't belong to any tracked OutreachSequence thread —
- * someone new emailing in, or a reply landing on a thread the team never attached to the CRM.
- * Populated by the inbox-watch pass (lib/inboxWatch.ts) every worker tick, surfaced in the
- * notifications bell alongside the existing reply/bounce/opt-out feed so nothing shows up in
- * Gmail without the team also seeing it here. Deliberately separate from ActivityLog, which is
- * always sequence-scoped — these by definition aren't (yet).
+ * A Gmail conversation, mirrored locally so the app has a real inbox of its own rather than a
+ * notification feed pointing at Gmail. Thread-level state (read, starred, archived) is synced
+ * both ways with Gmail's own labels, so acting here acts on the real mailbox and vice versa.
+ *
+ * Only metadata lives here by default — message bodies are fetched on demand the first time a
+ * thread is opened and then cached (bodiesFetchedAt). That keeps the sync cheap and the database
+ * small no matter how large the mailbox gets, which is the difference between this working for a
+ * week and working for years.
  */
-model InboxAlert {
+model InboxThread {
   id             String       @id @default(cuid())
   emailAccountId String
   emailAccount   EmailAccount @relation(fields: [emailAccountId], references: [id])
-  gmailMessageId String
   gmailThreadId  String
-  fromAddress    String
-  fromName       String
   subject        String
   snippet        String       @db.Text
-  receivedAt     DateTime
+  /** Whoever the conversation is *with* — the other party, not us. What the list column shows. */
+  fromName       String
+  fromAddress    String
+  lastMessageAt  DateTime
+  messageCount   Int          @default(1)
+  isUnread       Boolean      @default(true)
+  isStarred      Boolean      @default(false)
+  /** No INBOX label in Gmail — archived (or never in the inbox to begin with). */
+  isArchived     Boolean      @default(false)
+  isTrashed      Boolean      @default(false)
+  isSent         Boolean      @default(false)
+  /** Set when this conversation belongs to an outreach sequence the CRM is running, which is what
+   * lets the inbox show pipeline context inline and decide follow-up handling on a reply. */
+  sequenceId     String?
+  sequence       OutreachSequence? @relation(fields: [sequenceId], references: [id])
+  bodiesFetchedAt DateTime?
   createdAt      DateTime     @default(now())
-  /** Set once the team has acted on it (replied in Gmail, started tracking it, or just decided
-   * it doesn't need anything) — keeps it out of both the unread count and the list without
-   * losing the record. */
-  dismissedAt    DateTime?
+  updatedAt      DateTime     @updatedAt
 
-  @@unique([emailAccountId, gmailMessageId])
-  @@index([dismissedAt, receivedAt])
+  messages InboxMessage[]
+
+  @@unique([emailAccountId, gmailThreadId])
+  @@index([emailAccountId, isArchived, isTrashed, lastMessageAt])
+  @@index([isUnread])
+  @@index([isStarred])
+  @@index([sequenceId])
+}
+
+/** One message inside an InboxThread. Bodies are populated lazily — see InboxThread. */
+model InboxMessage {
+  id             String           @id @default(cuid())
+  threadId       String
+  thread         InboxThread      @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  gmailMessageId String
+  fromName       String
+  fromAddress    String
+  toAddresses    String           @db.Text
+  ccAddresses    String           @db.Text @default("")
+  subject        String
+  snippet        String           @db.Text
+  bodyText       String?          @db.Text
+  bodyHtml       String?          @db.Text
+  direction      MessageDirection
+  sentAt         DateTime
+
+  @@unique([threadId, gmailMessageId])
+  @@index([threadId, sentAt])
 }
 
 model Brand {
@@ -282,9 +331,16 @@ model OutreachSequence {
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 
+  /** When the reply-check pass last looked at this thread. The pass is time-bounded, so it
+   * processes least-recently-checked first — without that it would restart from the same order
+   * every tick and anything past the cutoff would never get checked at all once there are more
+   * active sequences than fit in one pass. */
+  lastReplyCheckAt DateTime?
+
   scheduledActions ScheduledAction[]
   messages         EmailMessage[]
   activityLogs     ActivityLog[]
+  inboxThreads     InboxThread[]
 
   @@unique([emailAccountId, threadId])
   @@index([deletedAt])

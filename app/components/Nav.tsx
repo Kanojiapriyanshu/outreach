@@ -8,10 +8,11 @@ import {
   SendHorizontal,
   Clock,
   Inbox,
+  Send,
+  Users,
   FileEdit,
   Trash2,
   FileText,
-  BarChart2,
   Activity,
   Settings,
   LogOut,
@@ -21,43 +22,77 @@ import {
 import Logo from "./Logo";
 import ThemeToggle from "./ThemeToggle";
 import NotificationsBell from "./NotificationsBell";
+import { useNotifications } from "./useNotifications";
 
-const LINKS = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/track", label: "New Outreach", icon: SendHorizontal },
-  { href: "/sent", label: "Sent", icon: Inbox },
-  { href: "/scheduled", label: "Scheduled", icon: Clock },
-  { href: "/drafts", label: "Drafts", icon: FileEdit },
-  { href: "/templates", label: "Email Templates", icon: FileText },
-  { href: "/analytics", label: "Results", icon: BarChart2 },
-  { href: "/activity", label: "History", icon: Activity },
-  { href: "/trash", label: "Trash", icon: Trash2 },
-  { href: "/settings", label: "Settings", icon: Settings },
+// Grouped by what someone is actually doing rather than one flat list of eleven things: mail is
+// mail, outreach is the CRM around it. Results used to be its own page and now lives on the
+// dashboard, which is where someone already is when they ask how outreach is going.
+const SECTIONS: { heading: string | null; links: { href: string; label: string; icon: typeof Inbox }[] }[] = [
+  {
+    heading: null,
+    links: [
+      { href: "/inbox", label: "Inbox", icon: Inbox },
+      { href: "/sent", label: "Sent", icon: Send },
+      { href: "/drafts", label: "Drafts", icon: FileEdit },
+      { href: "/scheduled", label: "Scheduled", icon: Clock },
+      { href: "/trash", label: "Trash", icon: Trash2 },
+    ],
+  },
+  {
+    heading: "Outreach",
+    links: [
+      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/pipeline", label: "Pipeline", icon: Users },
+      { href: "/track", label: "New Outreach", icon: SendHorizontal },
+      { href: "/templates", label: "Templates", icon: FileText },
+      { href: "/activity", label: "History", icon: Activity },
+    ],
+  },
+  {
+    heading: null,
+    links: [{ href: "/settings", label: "Settings", icon: Settings }],
+  },
 ];
 
-function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+function NavLinks({ onNavigate, unreadCount }: { onNavigate?: () => void; unreadCount: number }) {
   const pathname = usePathname();
   return (
-    <nav className="flex-1 px-3 py-4 space-y-0.5">
-      {LINKS.map((link) => {
-        const active = pathname === link.href || pathname?.startsWith(link.href + "/");
-        const Icon = link.icon;
-        return (
-          <Link
-            key={link.href}
-            href={link.href}
-            onClick={onNavigate}
-            className={`flex items-center gap-3 px-3 py-2.5 md:py-2 rounded-lg text-[14px] md:text-[13.5px] font-medium transition-colors ${
-              active
-                ? "bg-[var(--brand-teal-light)] text-[var(--brand-teal-dark)]"
-                : "text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)]"
-            }`}
-          >
-            <Icon size={17} strokeWidth={2} />
-            {link.label}
-          </Link>
-        );
-      })}
+    <nav className="flex-1 px-3 py-3 overflow-y-auto">
+      {SECTIONS.map((section, i) => (
+        <div key={section.heading ?? `section-${i}`} className={i > 0 ? "mt-4" : ""}>
+          {section.heading && (
+            <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-2)]">
+              {section.heading}
+            </div>
+          )}
+          <div className="space-y-0.5">
+            {section.links.map((link) => {
+              const active = pathname === link.href || pathname?.startsWith(link.href + "/");
+              const Icon = link.icon;
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={onNavigate}
+                  className={`flex items-center gap-3 px-3 py-2.5 md:py-2 rounded-lg text-[14px] md:text-[13.5px] font-medium transition-colors ${
+                    active
+                      ? "bg-[var(--brand-teal-light)] text-[var(--brand-teal-dark)]"
+                      : "text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)]"
+                  }`}
+                >
+                  <Icon size={17} strokeWidth={2} />
+                  <span className="flex-1">{link.label}</span>
+                  {link.href === "/inbox" && unreadCount > 0 && (
+                    <span className="text-[11px] font-bold" style={{ color: "var(--brand-teal-dark)" }}>
+                      {unreadCount > 99 ? "99+" : unreadCount}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </nav>
   );
 }
@@ -65,6 +100,7 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
 export default function Nav() {
   const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const { threads, alerts, unreadCount } = useNotifications();
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -98,9 +134,9 @@ export default function Nav() {
               aligning it to the bell (the default, correct for the mobile top bar below) would
               push it off-screen to the left, so here it opens left-aligned instead, extending
               rightward into the main content area where there's actually room. */}
-          <NotificationsBell align="left" />
+          <NotificationsBell align="left" threads={threads} alerts={alerts} unreadCount={unreadCount} />
         </div>
-        <NavLinks />
+        <NavLinks unreadCount={unreadCount} />
         {footer}
       </aside>
 
@@ -111,7 +147,7 @@ export default function Nav() {
           <span className="font-semibold text-[14px] tracking-tight text-[var(--ink)]">Fidem Growth</span>
         </div>
         <div className="flex items-center gap-1">
-          <NotificationsBell />
+          <NotificationsBell threads={threads} alerts={alerts} unreadCount={unreadCount} />
           <button
             onClick={() => setDrawerOpen(true)}
             aria-label="Open menu"
@@ -139,7 +175,7 @@ export default function Nav() {
                 <X size={20} />
               </button>
             </div>
-            <NavLinks onNavigate={() => setDrawerOpen(false)} />
+            <NavLinks unreadCount={unreadCount} onNavigate={() => setDrawerOpen(false)} />
             {footer}
           </aside>
         </div>

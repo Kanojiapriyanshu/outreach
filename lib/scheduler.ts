@@ -15,7 +15,7 @@ import { isUnderDailyLimit } from "@/lib/quota";
 import { classifyReply } from "@/lib/replyClassifier";
 import { renderNudge, maxStepsForNudge, type NudgeKind } from "@/lib/genericNudgeTemplates";
 import { processScheduledInitialEmail } from "@/lib/trackSequence";
-import { scanInboxForNewMail } from "@/lib/inboxWatch";
+import { syncInbox } from "@/lib/inboxSync";
 import { formatDateTime } from "@/lib/formatDate";
 import type { AutomationSettings, SequenceStatus as PrismaSequenceStatus, PipelineStage } from "@/app/generated/prisma/client";
 
@@ -437,6 +437,10 @@ export async function runContinuousReplyCheck() {
   const activeSequences = await prisma.outreachSequence.findMany({
     where: { status: { notIn: DEAD_STATUSES }, stage: { notIn: DEAD_STAGES }, deletedAt: null },
     include: { contact: true, emailAccount: true },
+    // Least-recently-checked first (never-checked sorts first). This pass is time-bounded, so a
+    // fixed order would mean everything past the cutoff never got checked at all once there are
+    // more active sequences than fit in one pass — the tail would go permanently unwatched.
+    orderBy: { lastReplyCheckAt: { sort: "asc", nulls: "first" } },
   });
 
   const results = [];
@@ -449,6 +453,12 @@ export async function runContinuousReplyCheck() {
     if (Date.now() - startedAt > REPLY_CHECK_TIME_BUDGET_MS) break;
     if (seq.emailAccount.accessStatus !== "CONNECTED") continue;
     try {
+      // Stamped before the check, not after, so a sequence whose check throws every time still
+      // rotates to the back of the queue instead of blocking everything behind it forever.
+      await prisma.outreachSequence.update({
+        where: { id: seq.id },
+        data: { lastReplyCheckAt: new Date() },
+      });
       const gmail = await gmailClientFor(seq.emailAccountId);
       const result = await checkThreadForTerminalEvent(gmail, seq);
       if (result.terminal) results.push({ sequenceId: seq.id, event: result.status });
@@ -916,7 +926,7 @@ export async function runWorkerTick() {
   if (!heavyPassRan && (!state.lastInboxScanAt || now - state.lastInboxScanAt.getTime() >= INBOX_SCAN_INTERVAL_MS)) {
     await prisma.workerHeartbeat.update({ where: { id: state.id }, data: { lastInboxScanAt: new Date() } });
     try {
-      newMailFound = (await scanInboxForNewMail()).created;
+      newMailFound = (await syncInbox()).threadsSynced;
     } catch (err) {
       // Same principle as the per-sequence try/catch inside runContinuousReplyCheck — a failure
       // scanning for new mail must never take down the rest of the tick (the due-sends above

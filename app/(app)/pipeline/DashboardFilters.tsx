@@ -25,7 +25,7 @@ export default function DashboardFilters() {
       else params.delete(key);
     }
     params.delete("page");
-    router.push(`/dashboard?${params.toString()}`);
+    router.push(`/pipeline?${params.toString()}`);
   }
 
   useEffect(() => {

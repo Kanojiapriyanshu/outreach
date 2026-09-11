@@ -1,51 +1,58 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-// The events actually worth interrupting someone for — a reply landed, someone opted out, or a
-// message bounced. Routine bookkeeping (FOLLOW_UP_SCHEDULED, NO_REPLY_FOUND, REPLY_CHECK_PERFORMED,
-// STAGE_CHANGED, etc.) stays in the full History log but doesn't belong in a notification feed —
-// this is specifically "don't let me miss an email that matters," not a duplicate of /activity.
-const HIGH_SIGNAL_EVENTS = ["REPLY_DETECTED", "GENERIC_REPLY_DETECTED", "UNSUBSCRIBE_DETECTED", "BOUNCE_DETECTED"] as const;
+// Sequence events worth interrupting someone for. Routine bookkeeping (FOLLOW_UP_SCHEDULED,
+// NO_REPLY_FOUND, REPLY_CHECK_PERFORMED, STAGE_CHANGED, etc.) stays in the full History log but
+// doesn't belong in a notification feed.
+const HIGH_SIGNAL_EVENTS = ["UNSUBSCRIBE_DETECTED", "BOUNCE_DETECTED"] as const;
 
-/** `?since=<ISO timestamp>` — when passed (the client's own last-seen marker), also returns the
- * *exact* unread count via separate COUNT queries, independent of the 30-row display caps below.
- * Without this, a genuinely-Gmail-like badge ("47 unread") would silently be wrong — capped at
- * whatever the display lists happened to fetch — once a batch of replies (or new inbox mail)
- * pushed past the cap.
+/**
+ * The notification feed, now anchored to the real inbox rather than to a parallel alert table.
  *
- * Two kinds of thing show up here: high-signal ActivityLog events on threads the CRM is already
- * tracking (replies, bounces, opt-outs), and InboxAlert rows — mail the inbox-watch pass found
- * that *isn't* part of any tracked thread at all (see lib/inboxWatch.ts). Both matter for "don't
- * let me miss an email," so both count toward the same badge and share the same dropdown.
+ * Unread means exactly what it means in Gmail: conversations in the inbox that haven't been read.
+ * That's the fix for the count being "logically" wrong before — it used to track a separate
+ * notion of "alerts you haven't looked at", so reading mail in Gmail left the badge stuck, and a
+ * reply on a tracked thread could be double-counted as both an alert and an activity event.
+ * Now there's one source of truth, it clears when mail is actually read (here or in Gmail), and
+ * it's the number the inbox itself shows.
+ *
+ * Delivery problems (bounces, opt-outs) still come from the activity log, because those aren't
+ * inbox conversations — nothing arrives to be read, but they absolutely need eyes.
  */
 export async function GET(req: NextRequest) {
   const since = req.nextUrl.searchParams.get("since");
   const sinceDate = since ? new Date(since) : null;
   const validSince = sinceDate && !isNaN(sinceDate.getTime()) ? sinceDate : null;
 
-  const [logs, inboxAlerts, unreadLogCount, unreadInboxCount] = await Promise.all([
+  const [unreadThreads, unreadCount, alerts, alertCount] = await Promise.all([
+    prisma.inboxThread.findMany({
+      where: { isUnread: true, isArchived: false, isTrashed: false },
+      orderBy: { lastMessageAt: "desc" },
+      take: 15,
+      select: {
+        id: true,
+        subject: true,
+        snippet: true,
+        fromName: true,
+        fromAddress: true,
+        lastMessageAt: true,
+        sequenceId: true,
+      },
+    }),
+    prisma.inboxThread.count({ where: { isUnread: true, isArchived: false, isTrashed: false } }),
     prisma.activityLog.findMany({
       where: {
         eventType: { in: [...HIGH_SIGNAL_EVENTS] },
         sequence: { deletedAt: null },
+        ...(validSince ? { timestamp: { gt: validSince } } : {}),
       },
       orderBy: { timestamp: "desc" },
-      take: 30,
+      take: 10,
       include: {
         sequence: {
-          select: {
-            id: true,
-            outreachType: true,
-            stage: true,
-            contact: { select: { name: true, email: true, brand: { select: { name: true } }, creator: { select: { name: true } } } },
-          },
+          select: { id: true, contact: { select: { name: true, email: true } } },
         },
       },
-    }),
-    prisma.inboxAlert.findMany({
-      where: { dismissedAt: null },
-      orderBy: { receivedAt: "desc" },
-      take: 30,
     }),
     validSince
       ? prisma.activityLog.count({
@@ -56,14 +63,13 @@ export async function GET(req: NextRequest) {
           },
         })
       : Promise.resolve(0),
-    validSince
-      ? prisma.inboxAlert.count({ where: { dismissedAt: null, receivedAt: { gt: validSince } } })
-      : prisma.inboxAlert.count({ where: { dismissedAt: null } }),
   ]);
 
   return NextResponse.json({
-    notifications: logs,
-    inboxAlerts,
-    unreadCount: unreadLogCount + unreadInboxCount,
+    unreadThreads,
+    alerts,
+    // One number, matching what the inbox shows — unread conversations plus anything that went
+    // wrong and can't be "read" away.
+    unreadCount: unreadCount + alertCount,
   });
 }

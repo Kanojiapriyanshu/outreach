@@ -26,6 +26,11 @@ export async function GET(req: NextRequest) {
     create: { name: profile.name ?? profile.email, email: profile.email },
   });
 
+  // Google returns exactly what the user consented to, which can be less than what was asked for.
+  // Recorded so the app can state plainly whether two-way inbox sync is actually available on
+  // this account rather than discovering it as a silent failure later.
+  const grantedScopes = tokens.scope ?? null;
+
   await prisma.emailAccount.upsert({
     where: { email: profile.email },
     update: {
@@ -33,6 +38,7 @@ export async function GET(req: NextRequest) {
       refreshToken: tokens.refresh_token ?? undefined,
       tokenExpiry: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
       accessStatus: "CONNECTED",
+      grantedScopes,
     },
     create: {
       userId: user.id,
@@ -42,6 +48,7 @@ export async function GET(req: NextRequest) {
       refreshToken: tokens.refresh_token ?? undefined,
       tokenExpiry: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
       accessStatus: "CONNECTED",
+      grantedScopes,
     },
   });
 
