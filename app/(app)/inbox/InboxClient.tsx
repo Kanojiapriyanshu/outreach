@@ -16,8 +16,10 @@ import {
   ChevronRight,
   RefreshCw,
   ArchiveRestore,
+  PenLine,
 } from "lucide-react";
 import ThreadView from "./ThreadView";
+import ComposeWindow from "./ComposeWindow";
 import type { InboxView } from "./page";
 
 export interface InboxThreadRow {
@@ -100,6 +102,9 @@ export default function InboxClient({
   // Applied immediately on click so the row reacts instantly; the server refresh confirms it.
   const [optimistic, setOptimistic] = useState<Record<string, Partial<InboxThreadRow>>>({});
   const [refreshing, setRefreshing] = useState(false);
+  // Kept at this level, not inside the list, so it survives opening a conversation — a compose
+  // window that vanished when you clicked something else to reference would be useless.
+  const [composing, setComposing] = useState(false);
 
   const rows = threads
     .map((t) => ({ ...t, ...optimistic[t.id] }))
@@ -163,22 +168,29 @@ export default function InboxClient({
     }
   }
 
+  const composeWindow = composing ? (
+    <ComposeWindow onClose={() => setComposing(false)} onSent={() => router.refresh()} />
+  ) : null;
+
   if (openThreadId) {
     return (
-      <ThreadView
-        threadId={openThreadId}
+      <>
+        {composeWindow}
+        <ThreadView
+          threadId={openThreadId}
         // Opening a row optimistically marked it read here, so that override has to be dropped
         // on the way back — otherwise marking it unread inside the thread would return to a list
         // still insisting it's read, and the stale local value would win over the server's.
-        onClose={() => {
-          forgetOptimistic(openThreadId);
-          navigate({ thread: null });
-        }}
-        onChanged={() => {
-          forgetOptimistic(openThreadId);
-          router.refresh();
-        }}
-      />
+          onClose={() => {
+            forgetOptimistic(openThreadId);
+            navigate({ thread: null });
+          }}
+          onChanged={() => {
+            forgetOptimistic(openThreadId);
+            router.refresh();
+          }}
+        />
+      </>
     );
   }
 
@@ -187,8 +199,17 @@ export default function InboxClient({
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)] md:h-screen md:-my-8 md:-mx-8">
+      {composeWindow}
+
       {/* Toolbar */}
       <div className="flex items-center gap-3 px-4 md:px-6 py-3 border-b border-[var(--border)] bg-[var(--surface)]">
+        <button
+          onClick={() => setComposing(true)}
+          className="btn-primary inline-flex items-center gap-1.5 px-3.5 py-2 text-sm shrink-0"
+        >
+          <PenLine size={15} />
+          <span className="hidden sm:inline">Compose</span>
+        </button>
         <div className="relative flex-1 max-w-xl">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-2)]" />
           <input

@@ -14,6 +14,7 @@ export async function GET() {
         timezone: true,
         dailySendLimit: true,
         createdAt: true,
+        grantedScopes: true,
       },
       orderBy: { createdAt: "asc" },
     }),

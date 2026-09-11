@@ -415,6 +415,114 @@ export async function modifyThreadLabels(
   });
 }
 
+export interface OutgoingAttachment {
+  filename: string;
+  mimeType: string;
+  /** Base64 (standard, not url-safe) file content. */
+  data: string;
+}
+
+export interface SendRichEmailParams {
+  to: string;
+  cc?: string;
+  bcc?: string;
+  subject: string;
+  /** HTML body. A plain-text alternative is generated from it automatically. */
+  html: string;
+  attachments?: OutgoingAttachment[];
+  /** Set to keep the message inside an existing conversation. */
+  threadId?: string;
+  inReplyToMessageId?: string;
+  references?: string;
+}
+
+/** Strips HTML down to readable text for the plain-text alternative part, so clients that don't
+ * render HTML (and spam filters, which treat HTML-only mail with suspicion) still get content. */
+function htmlToPlainTextForAlternative(html: string): string {
+  return htmlToPlainText(html);
+}
+
+function randomBoundary(prefix: string): string {
+  return `${prefix}_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+}
+
+/**
+ * Builds and sends a full MIME message: HTML body with a plain-text alternative, optional Cc/Bcc,
+ * and optional file attachments. Structure is the standard nesting mail clients expect —
+ * multipart/mixed wrapping a multipart/alternative body plus one part per attachment — which is
+ * what makes rich formatting and files show up correctly rather than as raw markup or garbage.
+ */
+export async function sendRichEmail(
+  gmail: gmail_v1.Gmail,
+  params: SendRichEmailParams
+): Promise<{ id: string; threadId: string }> {
+  const altBoundary = randomBoundary("alt");
+  const mixedBoundary = randomBoundary("mixed");
+  const attachments = params.attachments ?? [];
+  const hasAttachments = attachments.length > 0;
+
+  const headers = [
+    `To: ${params.to}`,
+    ...(params.cc ? [`Cc: ${params.cc}`] : []),
+    ...(params.bcc ? [`Bcc: ${params.bcc}`] : []),
+    `Subject: ${params.subject}`,
+    ...(params.inReplyToMessageId ? [`In-Reply-To: ${params.inReplyToMessageId}`] : []),
+    ...(params.inReplyToMessageId ? [`References: ${params.references || params.inReplyToMessageId}`] : []),
+    "MIME-Version: 1.0",
+    hasAttachments
+      ? `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`
+      : `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+  ].join("\r\n");
+
+  const alternativePart = [
+    `Content-Type: text/plain; charset=UTF-8`,
+    "",
+    htmlToPlainTextForAlternative(params.html),
+    "",
+    `--${altBoundary}`,
+    `Content-Type: text/html; charset=UTF-8`,
+    "",
+    params.html,
+    "",
+    `--${altBoundary}--`,
+  ].join("\r\n");
+
+  let body: string;
+  if (hasAttachments) {
+    const attachmentParts = attachments.map((a) =>
+      [
+        `--${mixedBoundary}`,
+        `Content-Type: ${a.mimeType}; name="${a.filename}"`,
+        `Content-Disposition: attachment; filename="${a.filename}"`,
+        "Content-Transfer-Encoding: base64",
+        "",
+        // Wrapped at 76 chars per RFC 2045; some servers reject unwrapped base64 lines.
+        a.data.replace(/(.{76})/g, "$1\r\n"),
+        "",
+      ].join("\r\n")
+    );
+    body = [
+      `--${mixedBoundary}`,
+      `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+      "",
+      `--${altBoundary}`,
+      alternativePart,
+      "",
+      ...attachmentParts,
+      `--${mixedBoundary}--`,
+    ].join("\r\n");
+  } else {
+    body = [`--${altBoundary}`, alternativePart].join("\r\n");
+  }
+
+  const raw = base64UrlEncode(`${headers}\r\n\r\n${body}`);
+  const res = await gmail.users.messages.send({
+    userId: "me",
+    requestBody: { raw, ...(params.threadId ? { threadId: params.threadId } : {}) },
+  });
+  return { id: res.data.id!, threadId: res.data.threadId! };
+}
+
 /** Sends a reply into an existing thread, preserving the headers that keep it in the same
  * conversation for the recipient's client rather than starting a new one. */
 export async function sendReplyInThread(

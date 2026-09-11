@@ -10,6 +10,9 @@ interface EmailAccount {
   accessStatus: string;
   dailySendLimit: number;
   sentToday: number;
+  /** Space-separated scopes Google granted at connect time; null for accounts connected before
+   * this was recorded, which are treated the same as not having two-way sync. */
+  grantedScopes: string | null;
 }
 
 interface Heartbeat {
@@ -195,6 +198,27 @@ export default function SettingsPage() {
                 )}
               </div>
             </div>
+            {/* Connected before two-way inbox sync was added, so Gmail never granted permission
+                to change labels. Reconnecting the same account updates it in place — it's the
+                same button as "Add Another Account", just named for what it actually does here,
+                since nobody looking to fix this would think to click "add another". */}
+            {acc.accessStatus === "CONNECTED" && !(acc.grantedScopes ?? "").includes("gmail.modify") && (
+              <div
+                className="flex items-center justify-between gap-3 text-xs rounded-lg px-3 py-2"
+                style={{ background: "rgba(244, 211, 94, 0.14)" }}
+              >
+                <span className="text-[var(--ink)]">
+                  Two-way inbox sync is off. Reading and sending work, but archiving, starring and read status
+                  won&rsquo;t reach Gmail.
+                </span>
+                <a
+                  href="/api/auth/google"
+                  className="btn-secondary px-3 py-1.5 text-xs whitespace-nowrap"
+                >
+                  Reconnect
+                </a>
+              </div>
+            )}
             {acc.accessStatus === "CONNECTED" && (
               <div className="flex items-center justify-between text-xs pt-2 border-t border-[var(--border)]">
                 <span className="text-[var(--muted)]">
