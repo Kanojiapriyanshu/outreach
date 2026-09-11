@@ -16,6 +16,8 @@ import {
   Clock,
 } from "lucide-react";
 import { formatDateTime } from "@/lib/formatDate";
+import RichTextEditor from "./RichTextEditor";
+import { useAttachments, AttachmentList, TemplatePicker, templateToHtml } from "./composerParts";
 
 interface ThreadMessage {
   id: string;
@@ -57,7 +59,12 @@ export default function ThreadView({
   const [thread, setThread] = useState<Thread | null>(null);
   const [loading, setLoading] = useState(true);
   const [replying, setReplying] = useState(false);
-  const [replyBody, setReplyBody] = useState("");
+  const [replyHtml, setReplyHtml] = useState("");
+  const [cc, setCc] = useState("");
+  const [bcc, setBcc] = useState("");
+  const [showCc, setShowCc] = useState(false);
+  const [showBcc, setShowBcc] = useState(false);
+  const { attachments, removeAt, totalBytes, AttachButton, clear: clearAttachments } = useAttachments();
   const [followUp, setFollowUp] = useState<FollowUpChoice>("auto");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,19 +101,27 @@ export default function ThreadView({
   }
 
   async function sendReply() {
-    if (!replyBody.trim()) return;
     setSending(true);
     setError(null);
     try {
       const res = await fetch(`/api/inbox/threads/${threadId}/reply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: replyBody, followUp }),
+        body: JSON.stringify({
+          html: replyHtml,
+          cc: cc || undefined,
+          bcc: bcc || undefined,
+          attachments: attachments.map(({ filename, mimeType, data }) => ({ filename, mimeType, data })),
+          followUp,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Couldn't send that reply");
 
-      setReplyBody("");
+      setReplyHtml("");
+      clearAttachments();
+      setCc("");
+      setBcc("");
       setReplying(false);
       setSentConfirmation(
         data.followUp?.action === "auto" && data.followUp?.scheduledAt
@@ -142,6 +157,11 @@ export default function ThreadView({
       </div>
     );
   }
+
+  // Mirrors the server's choice of recipient (lib: the reply route picks the last inbound sender,
+  // falling back to the thread's counterpart) so the box shows who it's actually going to.
+  const lastInbound = [...thread.messages].reverse().find((m) => m.direction === "IN");
+  const replyTo = lastInbound?.fromAddress ?? thread.messages[thread.messages.length - 1]?.toAddresses ?? "";
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)] md:h-screen md:-my-8 md:-mx-8">
@@ -257,14 +277,42 @@ export default function ThreadView({
               </button>
             ) : (
               <div className="card p-4 space-y-3">
-                <textarea
-                  autoFocus
-                  value={replyBody}
-                  onChange={(e) => setReplyBody(e.target.value)}
+                <div className="flex items-center justify-between gap-2 text-xs text-[var(--muted-2)] pb-2 border-b border-[var(--border)]">
+                  <span className="truncate">
+                    To <span className="text-[var(--ink)]">{replyTo}</span>
+                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {!showCc && <button onClick={() => setShowCc(true)} className="hover:text-[var(--ink)]">Cc</button>}
+                    {!showBcc && <button onClick={() => setShowBcc(true)} className="hover:text-[var(--ink)]">Bcc</button>}
+                  </div>
+                </div>
+
+                {showCc && (
+                  <input
+                    value={cc}
+                    onChange={(e) => setCc(e.target.value)}
+                    placeholder="Cc"
+                    className="w-full bg-transparent outline-none text-[13px] text-[var(--ink)] placeholder:text-[var(--muted-2)] border-b border-[var(--border)] pb-1.5"
+                  />
+                )}
+                {showBcc && (
+                  <input
+                    value={bcc}
+                    onChange={(e) => setBcc(e.target.value)}
+                    placeholder="Bcc"
+                    className="w-full bg-transparent outline-none text-[13px] text-[var(--ink)] placeholder:text-[var(--muted-2)] border-b border-[var(--border)] pb-1.5"
+                  />
+                )}
+
+                <RichTextEditor
+                  value={replyHtml}
+                  onChange={setReplyHtml}
                   placeholder="Write your reply…"
-                  className="input font-sans w-full"
-                  style={{ minHeight: 160, resize: "vertical" }}
+                  minHeight={160}
+                  autoFocus
                 />
+
+                <AttachmentList attachments={attachments} totalBytes={totalBytes} onRemove={removeAt} />
 
                 {/* The decision that keeps automation honest: a hand-written reply supersedes
                     whatever was queued, so the person writing it says what happens next. */}
@@ -293,15 +341,20 @@ export default function ThreadView({
                 <div className="flex items-center gap-2">
                   <button
                     onClick={sendReply}
-                    disabled={sending || !replyBody.trim()}
+                    disabled={sending || (!replyHtml.replace(/<[^>]*>/g, "").trim() && attachments.length === 0)}
                     className="btn-primary inline-flex items-center gap-2 px-4 py-2 text-sm disabled:opacity-50"
                   >
                     <Send size={14} /> {sending ? "Sending…" : "Send"}
                   </button>
+                  <AttachButton />
+                  <TemplatePicker
+                    onApply={(t) => setReplyHtml((prev) => (prev.replace(/<[^>]*>/g, "").trim() ? prev : templateToHtml(t.body)))}
+                  />
                   <button
                     onClick={() => {
                       setReplying(false);
-                      setReplyBody("");
+                      setReplyHtml("");
+                      clearAttachments();
                     }}
                     disabled={sending}
                     className="btn-secondary px-4 py-2 text-sm"

@@ -523,38 +523,6 @@ export async function sendRichEmail(
   return { id: res.data.id!, threadId: res.data.threadId! };
 }
 
-/** Sends a reply into an existing thread, preserving the headers that keep it in the same
- * conversation for the recipient's client rather than starting a new one. */
-export async function sendReplyInThread(
-  gmail: gmail_v1.Gmail,
-  params: {
-    threadId: string;
-    to: string;
-    cc?: string;
-    subject: string;
-    body: string;
-    inReplyToMessageId: string;
-    references: string;
-  }
-): Promise<{ id: string; threadId: string }> {
-  const headers = [
-    `To: ${params.to}`,
-    ...(params.cc ? [`Cc: ${params.cc}`] : []),
-    `Subject: ${params.subject}`,
-    `In-Reply-To: ${params.inReplyToMessageId}`,
-    `References: ${params.references || params.inReplyToMessageId}`,
-    "Content-Type: text/plain; charset=UTF-8",
-    "MIME-Version: 1.0",
-  ].join("\r\n");
-
-  const raw = base64UrlEncode(`${headers}\r\n\r\n${params.body}`);
-  const res = await gmail.users.messages.send({
-    userId: "me",
-    requestBody: { raw, threadId: params.threadId },
-  });
-  return { id: res.data.id!, threadId: res.data.threadId! };
-}
-
 /** Splits a "From" header ("Jane Doe <jane@brand.com>") into name and address — the address is
  * always present, the display name falls back to the address itself when the header has none. */
 export function parseFromHeader(from: string): { name: string; address: string } {

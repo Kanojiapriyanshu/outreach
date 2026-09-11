@@ -1,47 +1,9 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
-import { X, Minus, Maximize2, Minimize2, Paperclip, Trash2, Send, FileText, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { X, Minus, Maximize2, Minimize2, Trash2, Send, Loader2 } from "lucide-react";
 import RichTextEditor from "./RichTextEditor";
-
-interface PendingAttachment {
-  filename: string;
-  mimeType: string;
-  data: string; // base64
-  size: number;
-}
-
-interface Template {
-  id: string;
-  name: string;
-  subject: string;
-  body: string;
-  outreachType: string;
-  step: number;
-}
-
-/** Matches the server-side cap in /api/inbox/send — serverless request bodies are limited, and
- * base64 inflates a file by about a third. */
-const MAX_TOTAL_BYTES = 3 * 1024 * 1024;
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-/** Templates are stored as plain text with {Variable} tags; this renders them into the HTML body
- * without pretending the tags are resolved — they stay visible so it's obvious what to fill in. */
-function templateToHtml(body: string): string {
-  return body
-    .split("\n")
-    .map((line) => (line.trim() ? escapeHtml(line) : "<br>"))
-    .join("<br>");
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
+import { useAttachments, AttachmentList, TemplatePicker, templateToHtml } from "./composerParts";
 
 export default function ComposeWindow({ onClose, onSent }: { onClose: () => void; onSent: () => void }) {
   const [minimized, setMinimized] = useState(false);
@@ -54,54 +16,11 @@ export default function ComposeWindow({ onClose, onSent }: { onClose: () => void
   const [bcc, setBcc] = useState("");
   const [subject, setSubject] = useState("");
   const [html, setHtml] = useState("");
-  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  // No clear() needed here: discarding closes the whole window, which unmounts this state.
+  const { attachments, removeAt, totalBytes, AttachButton } = useAttachments();
 
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [templates, setTemplates] = useState<Template[] | null>(null);
-  const [showTemplates, setShowTemplates] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
-
-  const totalBytes = attachments.reduce((sum, a) => sum + a.size, 0);
-
-  const addFiles = useCallback(async (files: FileList) => {
-    setError(null);
-    const next: PendingAttachment[] = [];
-    for (const file of Array.from(files)) {
-      const buffer = await file.arrayBuffer();
-      let binary = "";
-      const bytes = new Uint8Array(buffer);
-      // Chunked so a large file doesn't blow the argument limit on String.fromCharCode.
-      for (let i = 0; i < bytes.length; i += 8192) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-      }
-      next.push({
-        filename: file.name,
-        mimeType: file.type || "application/octet-stream",
-        data: btoa(binary),
-        size: file.size,
-      });
-    }
-    setAttachments((prev) => [...prev, ...next]);
-  }, []);
-
-  async function loadTemplates() {
-    setShowTemplates(!showTemplates);
-    if (templates) return;
-    try {
-      const res = await fetch("/api/templates");
-      const data = await res.json();
-      setTemplates(data.templates ?? []);
-    } catch {
-      setTemplates([]);
-    }
-  }
-
-  function applyTemplate(t: Template) {
-    if (!subject.trim()) setSubject(t.subject);
-    setHtml((prev) => (prev.trim() ? prev : templateToHtml(t.body)));
-    setShowTemplates(false);
-  }
 
   async function send() {
     setSending(true);
@@ -209,29 +128,13 @@ export default function ComposeWindow({ onClose, onSent }: { onClose: () => void
 
         {/* Templates — the CRM already has the team's approved copy, so composing from it beats
             retyping it or pasting from somewhere else. */}
-        <div className="relative py-2">
-          <button
-            onClick={loadTemplates}
-            className="btn-secondary inline-flex items-center gap-1.5 px-2.5 py-1 text-xs"
-          >
-            <FileText size={12} /> Load template
-          </button>
-          {showTemplates && (
-            <div className="absolute left-0 top-full mt-1 w-72 max-h-64 overflow-y-auto card p-1 z-10" style={{ boxShadow: "var(--shadow-card)" }}>
-              {templates === null && <p className="px-2 py-3 text-xs text-[var(--muted-2)]">Loading…</p>}
-              {templates?.length === 0 && <p className="px-2 py-3 text-xs text-[var(--muted-2)]">No templates yet.</p>}
-              {templates?.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => applyTemplate(t)}
-                  className="block w-full text-left rounded px-2 py-1.5 hover:bg-[var(--bg)]"
-                >
-                  <div className="text-xs font-medium text-[var(--ink)] truncate">{t.name}</div>
-                  <div className="text-[11px] text-[var(--muted-2)] truncate">{t.subject}</div>
-                </button>
-              ))}
-            </div>
-          )}
+        <div className="py-2">
+          <TemplatePicker
+            onApply={(t) => {
+              if (!subject.trim()) setSubject(t.subject);
+              setHtml((prev) => (prev.replace(/<[^>]*>/g, "").trim() ? prev : templateToHtml(t.body)));
+            }}
+          />
         </div>
 
         <RichTextEditor
@@ -241,32 +144,7 @@ export default function ComposeWindow({ onClose, onSent }: { onClose: () => void
           minHeight={fullScreen ? 320 : 180}
         />
 
-        {attachments.length > 0 && (
-          <div className="py-2 space-y-1">
-            {attachments.map((a, i) => (
-              <div
-                key={`${a.filename}-${i}`}
-                className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-xs"
-                style={{ background: "var(--bg)", border: "1px solid var(--border)" }}
-              >
-                <span className="truncate text-[var(--ink)]">{a.filename}</span>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[var(--muted-2)]">{formatBytes(a.size)}</span>
-                  <button
-                    onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== i))}
-                    aria-label={`Remove ${a.filename}`}
-                    className="text-[var(--muted-2)] hover:text-[var(--ink)]"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              </div>
-            ))}
-            <div className="text-[11px] text-[var(--muted-2)]">
-              {formatBytes(totalBytes)} of {formatBytes(MAX_TOTAL_BYTES)} used
-            </div>
-          </div>
-        )}
+        <AttachmentList attachments={attachments} totalBytes={totalBytes} onRemove={removeAt} />
 
         {error && (
           <p className="py-2 text-xs" style={{ color: "var(--danger-fg)" }}>
@@ -286,19 +164,7 @@ export default function ComposeWindow({ onClose, onSent }: { onClose: () => void
           {sending ? "Sending…" : "Send"}
         </button>
 
-        <input
-          ref={fileInput}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => {
-            if (e.target.files) addFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
-        <IconButton label="Attach files" onClick={() => fileInput.current?.click()}>
-          <Paperclip size={15} />
-        </IconButton>
+        <AttachButton />
 
         <div className="ml-auto">
           <IconButton label="Discard draft" onClick={discard}>

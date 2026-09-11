@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { gmailClientFor, sendReplyInThread, getRfc822MessageId, modifyThreadLabels } from "@/lib/gmail";
+import { gmailClientFor, sendRichEmail, getRfc822MessageId, modifyThreadLabels, type OutgoingAttachment } from "@/lib/gmail";
 import { refreshThread } from "@/lib/inboxSync";
 import { computeNextScheduledAt } from "@/lib/scheduler";
 import { formatDateTime } from "@/lib/formatDate";
+
+export const maxDuration = 60;
+
+/** Mirrors the cap in /api/inbox/send — see the note there on serverless body limits. */
+const MAX_ATTACHMENT_BYTES = 3 * 1024 * 1024;
 
 /** What should happen to automation after a human replies by hand. */
 type FollowUpChoice =
@@ -13,8 +18,36 @@ type FollowUpChoice =
   | "none";
 
 interface ReplyBody {
-  body: string;
+  /** HTML body from the rich-text composer. */
+  html: string;
+  cc?: string;
+  bcc?: string;
+  attachments?: OutgoingAttachment[];
   followUp?: FollowUpChoice;
+}
+
+function isValidEmailList(value: string): boolean {
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .every((address) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address));
+}
+
+/** Flattens the composed HTML for the activity record, which stores plain text. */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|tr)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /**
@@ -29,10 +62,25 @@ interface ReplyBody {
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { body, followUp = "auto" }: ReplyBody = await req.json();
+  const { html, cc, bcc, attachments = [], followUp = "auto" }: ReplyBody = await req.json();
 
-  if (!body?.trim()) {
+  const bodyText = htmlToText(html ?? "");
+  if (!bodyText && attachments.length === 0) {
     return NextResponse.json({ error: "Write something before sending" }, { status: 400 });
+  }
+  if (cc?.trim() && !isValidEmailList(cc)) {
+    return NextResponse.json({ error: "That Cc address doesn't look right" }, { status: 400 });
+  }
+  if (bcc?.trim() && !isValidEmailList(bcc)) {
+    return NextResponse.json({ error: "That Bcc address doesn't look right" }, { status: 400 });
+  }
+
+  const totalBytes = attachments.reduce((sum, a) => sum + Math.floor((a.data?.length ?? 0) * 0.75), 0);
+  if (totalBytes > MAX_ATTACHMENT_BYTES) {
+    return NextResponse.json(
+      { error: `Attachments are too large (${(totalBytes / 1024 / 1024).toFixed(1)}MB). Keep the total under 3MB, or share a link instead.` },
+      { status: 413 }
+    );
   }
 
   const thread = await prisma.inboxThread.findUnique({
@@ -56,11 +104,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const gmail = await gmailClientFor(thread.emailAccountId);
     const { messageId: rfc822MessageId, references } = await getRfc822MessageId(gmail, target.gmailMessageId);
 
-    sent = await sendReplyInThread(gmail, {
+    sent = await sendRichEmail(gmail, {
       threadId: thread.gmailThreadId,
       to,
+      cc: cc?.trim() || undefined,
+      bcc: bcc?.trim() || undefined,
       subject,
-      body,
+      html: html ?? "",
+      attachments,
       inReplyToMessageId: rfc822MessageId,
       references,
     });
@@ -95,7 +146,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           direction: "OUT",
           source: "MANUAL",
           subject,
-          body,
+          body: bodyText,
           sentAt: new Date(),
           status: "SENT",
         },
