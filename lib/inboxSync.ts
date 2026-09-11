@@ -8,6 +8,7 @@ import {
   parseFromHeader,
   type SyncedThread,
 } from "@/lib/gmail";
+import { isTrackingNotification } from "@/lib/trackingSenders";
 
 /**
  * Threads pulled per run. The incremental path normally returns a handful of changed threads, so
@@ -47,7 +48,19 @@ async function upsertThread(
   if (thread.messages.length === 0) return null;
 
   const state = labelState(thread.labelIds);
-  const sorted = [...thread.messages].sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime());
+  const sorted = [...thread.messages]
+    .filter((m) => !isTrackingNotification(parseFromHeader(m.from).address))
+    .sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime());
+
+  // Nothing but tracking notifications — there's no conversation here to mirror. Remove any
+  // version of it already stored, so turning this filter on cleans up what it previously let in.
+  if (sorted.length === 0) {
+    await prisma.inboxThread.deleteMany({
+      where: { emailAccountId, gmailThreadId: thread.gmailThreadId },
+    });
+    return null;
+  }
+
   const latest = sorted[sorted.length - 1];
 
   // The conversation is *with* the other party — show them in the list, not ourselves, even when
@@ -79,6 +92,15 @@ async function upsertThread(
     where: { emailAccountId_gmailThreadId: { emailAccountId, gmailThreadId: thread.gmailThreadId } },
     create: { emailAccountId, gmailThreadId: thread.gmailThreadId, ...common },
     update: common,
+  });
+
+  // Clear out tracking notifications stored before this filter existed, so a re-sync repairs
+  // existing threads rather than only keeping new ones clean.
+  await prisma.inboxMessage.deleteMany({
+    where: {
+      threadId: row.id,
+      gmailMessageId: { notIn: sorted.map((m) => m.gmailMessageId) },
+    },
   });
 
   for (const m of sorted) {

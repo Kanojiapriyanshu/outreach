@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { gmailClientFor, sendRichEmail, getRfc822MessageId, modifyThreadLabels, type OutgoingAttachment } from "@/lib/gmail";
 import { refreshThread } from "@/lib/inboxSync";
+import { isTrackingNotification } from "@/lib/trackingSenders";
 import { computeNextScheduledAt } from "@/lib/scheduler";
 import { formatDateTime } from "@/lib/formatDate";
 
@@ -94,8 +95,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // Reply to whoever last wrote in — falling back to the thread's counterpart if every message
   // here is one of ours (a thread we started and they haven't answered).
-  const lastInbound = [...thread.messages].reverse().find((m) => m.direction === "IN");
-  const target = lastInbound ?? thread.messages[thread.messages.length - 1];
+  //
+  // Tracking notifications are excluded explicitly rather than relying on the sync filter alone.
+  // Getting this wrong doesn't degrade gracefully: a read-receipt robot's mail threads into the
+  // real conversation, and picking it as "the last inbound" would address the reply to the robot
+  // instead of the person. Belt and braces on a mistake that sends mail to the wrong recipient.
+  const lastInbound = [...thread.messages]
+    .reverse()
+    .find((m) => m.direction === "IN" && !isTrackingNotification(m.fromAddress));
+  // The message whose headers the reply threads onto — also never a tracking notification, so the
+  // conversation stays anchored to real correspondence.
+  const realMessages = thread.messages.filter((m) => !isTrackingNotification(m.fromAddress));
+  const target = lastInbound ?? realMessages[realMessages.length - 1] ?? thread.messages[thread.messages.length - 1];
   const to = lastInbound ? lastInbound.fromAddress : thread.fromAddress;
   const subject = thread.subject.toLowerCase().startsWith("re:") ? thread.subject : `Re: ${thread.subject}`;
 

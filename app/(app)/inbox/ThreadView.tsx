@@ -18,6 +18,7 @@ import {
 import { formatDateTime } from "@/lib/formatDate";
 import RichTextEditor from "./RichTextEditor";
 import { useAttachments, AttachmentList, TemplatePicker, templateToHtml } from "./composerParts";
+import { isTrackingNotification } from "@/lib/trackingSenders";
 
 interface ThreadMessage {
   id: string;
@@ -158,9 +159,12 @@ export default function ThreadView({
     );
   }
 
-  // Mirrors the server's choice of recipient (lib: the reply route picks the last inbound sender,
-  // falling back to the thread's counterpart) so the box shows who it's actually going to.
-  const lastInbound = [...thread.messages].reverse().find((m) => m.direction === "IN");
+  // Mirrors the server's choice of recipient exactly — including skipping read-tracking robots,
+  // whose notifications thread into the real conversation — so the address shown in the reply box
+  // is always the one the reply actually goes to.
+  const lastInbound = [...thread.messages]
+    .reverse()
+    .find((m) => m.direction === "IN" && !isTrackingNotification(m.fromAddress));
   const replyTo = lastInbound?.fromAddress ?? thread.messages[thread.messages.length - 1]?.toAddresses ?? "";
 
   return (
