@@ -9,6 +9,7 @@ import {
   Trash2,
   Reply,
   Send,
+  MailOpen,
   Loader2,
   ExternalLink,
   CircleCheck,
@@ -177,6 +178,18 @@ export default function ThreadView({
           }}
         >
           <Trash2 size={16} />
+        </ToolbarButton>
+        {/* Opening a conversation marks it read, so the useful action here is putting it back —
+            and like every mail client, doing that returns you to the list, since the whole point
+            is leaving it for later rather than continuing to read it now. */}
+        <ToolbarButton
+          label="Mark as unread"
+          onClick={() => {
+            mutate({ isUnread: true });
+            onClose();
+          }}
+        >
+          <MailOpen size={16} />
         </ToolbarButton>
 
         <div className="ml-auto flex items-center gap-3">

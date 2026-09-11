@@ -125,6 +125,16 @@ export default function InboxClient({
     [router, searchParams]
   );
 
+  /** Drops a row's local override so the server's value is authoritative again. */
+  const forgetOptimistic = useCallback((id: string) => {
+    setOptimistic((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }, []);
+
   async function mutate(id: string, patch: Partial<InboxThreadRow>) {
     setOptimistic((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
     try {
@@ -157,8 +167,17 @@ export default function InboxClient({
     return (
       <ThreadView
         threadId={openThreadId}
-        onClose={() => navigate({ thread: null })}
-        onChanged={() => router.refresh()}
+        // Opening a row optimistically marked it read here, so that override has to be dropped
+        // on the way back — otherwise marking it unread inside the thread would return to a list
+        // still insisting it's read, and the stale local value would win over the server's.
+        onClose={() => {
+          forgetOptimistic(openThreadId);
+          navigate({ thread: null });
+        }}
+        onChanged={() => {
+          forgetOptimistic(openThreadId);
+          router.refresh();
+        }}
       />
     );
   }
