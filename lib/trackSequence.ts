@@ -201,8 +201,8 @@ async function finalizeSequence(
   const nextStep = startingStep + 1;
   const settings = await prisma.automationSettings.findFirstOrThrow();
   const manualDate = input.manualScheduledAt ? new Date(input.manualScheduledAt) : null;
-  const scheduledAt =
-    manualDate && !isNaN(manualDate.getTime()) ? manualDate : computeNextScheduledAt(input.outreachType, nextStep, settings);
+  const pickedByHand = !!(manualDate && !isNaN(manualDate.getTime()));
+  const scheduledAt = pickedByHand ? manualDate! : computeNextScheduledAt(input.outreachType, nextStep, settings);
 
   // Template.step N+1 = "Follow-Up N" (step 1 is Email 1) — look up its current active version
   // so an edited-since-seed template isn't silently skipped over.
@@ -218,6 +218,7 @@ async function finalizeSequence(
       status: "PENDING",
       templateVersion: followUpTemplate?.version ?? 1,
       actionKey: `${sequence.id}-step-${nextStep}`,
+      manuallyScheduled: pickedByHand,
     },
   });
 
@@ -410,8 +411,33 @@ export async function scheduleInitialEmail(
   return { ok: true, scheduledId: scheduled.id, scheduledAt };
 }
 
+/** How long a tick can hold this row before another tick assumes it died mid-send. Mirrors
+ * CLAIM_STALE_MS in lib/scheduler.ts. */
+const CLAIM_STALE_MS = 5 * 60 * 1000;
+
 /** Sends one due ScheduledInitialEmail through the normal compose-and-send path. */
 export async function processScheduledInitialEmail(scheduledId: string) {
+  // Ticks overlap (the worker loops every ~30s), so take exclusive ownership before doing any
+  // Gmail work — a plain read-then-send would let two ticks both see PENDING and send twice.
+  const staleBefore = new Date(Date.now() - CLAIM_STALE_MS);
+  const claim = await prisma.scheduledInitialEmail.updateMany({
+    where: { id: scheduledId, status: "PENDING", OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }] },
+    data: { claimedAt: new Date() },
+  });
+  if (claim.count !== 1) return { skipped: true, reason: "Already being processed" };
+
+  try {
+    return await sendClaimedInitialEmail(scheduledId);
+  } finally {
+    // Only matters if it's still pending — a row that sent or failed is no longer PENDING.
+    await prisma.scheduledInitialEmail.updateMany({
+      where: { id: scheduledId, status: "PENDING" },
+      data: { claimedAt: null },
+    });
+  }
+}
+
+async function sendClaimedInitialEmail(scheduledId: string) {
   const scheduled = await prisma.scheduledInitialEmail.findUnique({ where: { id: scheduledId } });
   if (!scheduled || scheduled.status !== "PENDING") return { skipped: true };
 
@@ -440,7 +466,7 @@ export async function processScheduledInitialEmail(scheduledId: string) {
   if (result.ok) {
     await prisma.scheduledInitialEmail.update({
       where: { id: scheduled.id },
-      data: { status: "SENT", sentSequenceId: result.sequenceId },
+      data: { status: "SENT", sentSequenceId: result.sequenceId, sentAt: new Date() },
     });
     return { sent: true, sequenceId: result.sequenceId };
   }

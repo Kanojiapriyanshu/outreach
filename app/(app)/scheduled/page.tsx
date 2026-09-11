@@ -31,6 +31,20 @@ const STATUS_LABEL: Record<string, string> = {
   CANCELLED: "Cancelled",
 };
 
+/** How close the actual send landed to the time it was scheduled for. Worth showing rather than
+ * assuming: the worker used to run on a plain cron schedule that could drift by over an hour, so
+ * "did it actually go out when I said" is a question the page should answer on its own. */
+function DeliveryAccuracy({ scheduledAt, sentAt }: { scheduledAt: Date; sentAt: Date }) {
+  const driftMs = sentAt.getTime() - scheduledAt.getTime();
+  const driftMin = Math.round(driftMs / 60000);
+
+  if (driftMin <= 2) {
+    return <div style={{ color: "var(--success-fg)" }}>On time</div>;
+  }
+  const label = driftMin < 60 ? `${driftMin} min late` : `${Math.floor(driftMin / 60)}h ${driftMin % 60}m late`;
+  return <div style={{ color: driftMin > 15 ? "var(--danger-fg)" : "var(--muted-2)" }}>{label}</div>;
+}
+
 export default async function ScheduledPage() {
   const [pending, history] = await Promise.all([
     prisma.scheduledInitialEmail.findMany({
@@ -147,9 +161,12 @@ export default async function ScheduledPage() {
                   </td>
                   <td className="px-5 py-3.5 text-[var(--muted-2)] text-xs">
                     {s.status === "SENT" && s.sentSequenceId ? (
-                      <Link href={`/dashboard/${s.sentSequenceId}`} className="hover:text-[var(--brand-teal-dark)]">
-                        View sequence →
-                      </Link>
+                      <div className="space-y-0.5">
+                        <Link href={`/dashboard/${s.sentSequenceId}`} className="hover:text-[var(--brand-teal-dark)]">
+                          View sequence →
+                        </Link>
+                        {s.sentAt && <DeliveryAccuracy scheduledAt={s.scheduledAt} sentAt={s.sentAt} />}
+                      </div>
                     ) : s.status === "FAILED" && s.error ? (
                       s.error
                     ) : (

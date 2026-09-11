@@ -63,7 +63,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
     const wasCancelled = action.status === "CANCELLED";
     await prisma.$transaction([
-      prisma.scheduledAction.update({ where: { id }, data: { scheduledAt: newDate, status: "PENDING" } }),
+      // manuallyScheduled: the team picked this exact moment, so the send-time sending-window
+      // clamp must leave it alone (see processScheduledAction) instead of quietly moving it.
+      prisma.scheduledAction.update({
+        where: { id },
+        data: { scheduledAt: newDate, status: "PENDING", manuallyScheduled: true },
+      }),
       prisma.activityLog.create({
         data: {
           sequenceId: action.sequenceId,

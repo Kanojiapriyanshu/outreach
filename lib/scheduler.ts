@@ -537,6 +537,22 @@ export async function processScheduledAction(
   scheduledActionId: string,
   options: { ignoreSendingWindow?: boolean } = {}
 ) {
+  // Claim before touching Gmail so overlapping ticks (or a tick racing the dashboard's "Send It
+  // Now" button) can't both send this one.
+  if (!(await claimScheduledAction(scheduledActionId))) {
+    return { skipped: true, reason: "Already being processed" };
+  }
+  try {
+    return await processScheduledActionClaimed(scheduledActionId, options);
+  } finally {
+    await releaseScheduledActionClaim(scheduledActionId);
+  }
+}
+
+async function processScheduledActionClaimed(
+  scheduledActionId: string,
+  options: { ignoreSendingWindow?: boolean } = {}
+) {
   const action = await prisma.scheduledAction.findUnique({
     where: { id: scheduledActionId },
     include: {
@@ -602,7 +618,10 @@ export async function processScheduledAction(
   const settings = await prisma.automationSettings.findFirstOrThrow();
   const now = new Date();
   const clamped = clampToSendingWindow(now, settings);
-  if (!options.ignoreSendingWindow && clamped.getTime() > now.getTime() + 60_000) {
+  // A time a human picked by hand is a decision, not a suggestion — the window exists to keep the
+  // *automatic* cadence inside business hours, so it must not quietly move an explicitly chosen
+  // send to some other time.
+  if (!options.ignoreSendingWindow && !action.manuallyScheduled && clamped.getTime() > now.getTime() + 60_000) {
     // Outside the window right now; push this action to the next valid moment and retry later.
     await prisma.scheduledAction.update({ where: { id: action.id }, data: { scheduledAt: clamped } });
     return { skipped: true, reason: "Outside sending window; rescheduled" };
@@ -732,89 +751,130 @@ export async function processScheduledAction(
   return { sent: true };
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// The tick route (app/api/cron/tick) has a 60s ceiling on Vercel. The two due-send passes below
-// each get a slice of the budget — generous enough for normal traffic, but bounded so a backlog
-// (e.g. the worker having been down for a while) can't make the deliberate anti-burst spacing
-// below run the function past its own timeout, which would silently drop whatever hadn't sent
-// yet instead of cleanly deferring it to the next tick.
-const TICK_TIME_BUDGET_MS = 15_000;
-// Reply-checking is best-effort and runs last (see runWorkerTick) specifically so it can never
-// starve a due send of its time slice — a reply noticed 5 minutes late is a non-event; a promised
-// email that silently never goes out is not. Keeping (2 * TICK_TIME_BUDGET_MS) +
-// REPLY_CHECK_TIME_BUDGET_MS comfortably under the 60s ceiling leaves headroom for DB round-trips
-// and Vercel cold-start overhead that isn't captured by the in-process timers.
+// Reply-checking is best-effort and runs after the send passes (see runWorkerTick) specifically
+// so it can never starve a due send — a reply noticed a minute late is a non-event; a promised
+// email that silently never goes out is not. Bounded so it always leaves headroom under the
+// tick route's 60s Vercel ceiling.
 const REPLY_CHECK_TIME_BUDGET_MS = 20_000;
 
+/** How long a tick can hold a row before another tick assumes it died mid-send and takes over. */
+const CLAIM_STALE_MS = 5 * 60 * 1000;
+
+// Cadence for the two Gmail-heavy passes, independent of how often the tick itself runs. Stamped
+// before the pass starts, which doubles as a cheap mutex so overlapping ticks don't both run it.
+const REPLY_CHECK_INTERVAL_MS = 2 * 60 * 1000;
+const INBOX_SCAN_INTERVAL_MS = 2 * 60 * 1000;
+
+/** Single-row table holding the worker's cross-tick state (last-run stamps, send spacing). */
+async function getWorkerState() {
+  const existing = await prisma.workerHeartbeat.findFirst();
+  return existing ?? prisma.workerHeartbeat.create({ data: { lastRunAt: new Date() } });
+}
+
 /**
- * Polls all due, pending scheduled actions and processes them. Entry point for the worker loop.
- * Sends are spaced out with a randomized human-like gap (configurable in Settings) instead of
- * firing every due follow-up in the same instant — a burst of identical-looking sends is one of
- * the more obvious "this is a bot" signals to a mail provider. Stops (leaving the rest for the
- * next tick — still due, nothing lost) once it's used up its safe slice of this invocation's time
- * budget, rather than risk the platform killing the function mid-send.
+ * Anti-burst spacing that doesn't block. The old approach slept between sends inside the tick,
+ * which stops working once ticks are short and frequent — and sleeping in a serverless function
+ * is billed wall-clock time spent doing nothing. Instead each send pushes a "next send allowed"
+ * stamp forward by the configured random gap, and every tick simply declines to send before it.
+ * Same human-looking spacing, no blocking, and it holds across ticks and concurrent runs.
+ */
+async function sendingAllowedNow(): Promise<boolean> {
+  const state = await getWorkerState();
+  return !state.nextSendAllowedAt || state.nextSendAllowedAt.getTime() <= Date.now();
+}
+
+async function spaceOutNextSend(settings: AutomationSettings) {
+  const min = settings.sendSpacingSecondsMin;
+  const max = Math.max(min, settings.sendSpacingSecondsMax);
+  const gapMs = (min + Math.random() * (max - min)) * 1000;
+  const state = await getWorkerState();
+  await prisma.workerHeartbeat.update({
+    where: { id: state.id },
+    data: { nextSendAllowedAt: new Date(Date.now() + gapMs) },
+  });
+}
+
+/**
+ * Takes exclusive ownership of a pending row before any Gmail work happens. Ticks overlap now
+ * (the worker loops every ~30s and a finishing run can briefly overlap a starting one), so a
+ * plain read-then-send would let two ticks both see PENDING and send the same email twice. A
+ * claim older than CLAIM_STALE_MS is treated as abandoned, so a tick killed mid-send by the
+ * platform's function timeout can't strand a row as permanently unsendable.
+ */
+async function claimScheduledAction(id: string): Promise<boolean> {
+  const staleBefore = new Date(Date.now() - CLAIM_STALE_MS);
+  const result = await prisma.scheduledAction.updateMany({
+    where: { id, status: "PENDING", OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }] },
+    data: { claimedAt: new Date() },
+  });
+  return result.count === 1;
+}
+
+/** Hands a still-pending row back so the next tick can retry it. A row that actually sent is no
+ * longer PENDING, so this leaves it alone. */
+async function releaseScheduledActionClaim(id: string) {
+  await prisma.scheduledAction.updateMany({ where: { id, status: "PENDING" }, data: { claimedAt: null } });
+}
+
+// How many due rows a single pass will look at. It only ever *sends* one (the spacing gate stops
+// it after that), but it walks a few so a row that skips for its own reasons — suppressed
+// recipient, paused sequence — can't sit at the head of the queue blocking everything behind it.
+const SEND_SCAN_DEPTH = 5;
+
+/**
+ * Sends the single most-overdue follow-up that's ready to go, if the spacing gate allows one
+ * right now. One per tick rather than a whole batch: ticks run every ~30s, so a backlog still
+ * drains quickly, and each send naturally lands a randomized gap after the last one without the
+ * pass ever blocking. Anything not sent this tick is still due and gets picked up by the next.
  */
 export async function runDueScheduledActions() {
+  if (!(await sendingAllowedNow())) return [];
+
   const due = await prisma.scheduledAction.findMany({
     where: { status: "PENDING", scheduledAt: { lte: new Date() }, sequence: { deletedAt: null } },
     orderBy: { scheduledAt: "asc" },
+    take: SEND_SCAN_DEPTH,
   });
+  if (due.length === 0) return [];
 
   const settings = await prisma.automationSettings.findFirstOrThrow();
   const results = [];
-  const startedAt = Date.now();
 
-  for (let i = 0; i < due.length; i++) {
-    if (Date.now() - startedAt > TICK_TIME_BUDGET_MS) break;
-
-    const result = await processScheduledAction(due[i].id);
-    results.push({ actionId: due[i].id, ...result });
-
-    if (result.sent && i < due.length - 1) {
-      const min = settings.sendSpacingSecondsMin;
-      const max = Math.max(min, settings.sendSpacingSecondsMax);
-      const gapMs = (min + Math.random() * (max - min)) * 1000;
-      // Cap the actual sleep to whatever's left in this pass's budget instead of the full
-      // randomized gap — still spaces sends out, just doesn't blow through the function's time
-      // limit when the configured spacing is generous and there's a backlog to work through.
-      const remaining = TICK_TIME_BUDGET_MS - (Date.now() - startedAt);
-      await sleep(Math.max(0, Math.min(gapMs, remaining)));
+  for (const action of due) {
+    const result = await processScheduledAction(action.id);
+    results.push({ actionId: action.id, ...result });
+    if ("sent" in result && result.sent) {
+      await spaceOutNextSend(settings);
+      break;
     }
   }
   return results;
 }
 
 /**
- * Sends whatever "Write & Send" emails were scheduled for a future time (like Gmail's own
- * "Schedule send") and are now due. Spaced out the same way runDueScheduledActions is, for the
- * same reason — a burst of brand-new outreach emails landing at the identical moment looks
- * automated.
+ * Same, for "Write & Send" emails scheduled for a future time (like Gmail's own "Schedule send").
+ * Shares the one spacing gate with the follow-up pass above, so a tick sends at most one email
+ * total across both — whichever is most overdue gets its turn first.
  */
 export async function runDueInitialEmails() {
+  if (!(await sendingAllowedNow())) return [];
+
   const due = await prisma.scheduledInitialEmail.findMany({
     where: { status: "PENDING", scheduledAt: { lte: new Date() } },
     orderBy: { scheduledAt: "asc" },
+    take: SEND_SCAN_DEPTH,
   });
+  if (due.length === 0) return [];
 
   const settings = await prisma.automationSettings.findFirstOrThrow();
   const results = [];
-  const startedAt = Date.now();
 
-  for (let i = 0; i < due.length; i++) {
-    if (Date.now() - startedAt > TICK_TIME_BUDGET_MS) break;
-
-    const result = await processScheduledInitialEmail(due[i].id);
-    results.push({ scheduledId: due[i].id, ...result });
-
-    if ("sent" in result && result.sent && i < due.length - 1) {
-      const min = settings.sendSpacingSecondsMin;
-      const max = Math.max(min, settings.sendSpacingSecondsMax);
-      const gapMs = (min + Math.random() * (max - min)) * 1000;
-      const remaining = TICK_TIME_BUDGET_MS - (Date.now() - startedAt);
-      await sleep(Math.max(0, Math.min(gapMs, remaining)));
+  for (const scheduled of due) {
+    const result = await processScheduledInitialEmail(scheduled.id);
+    results.push({ scheduledId: scheduled.id, ...result });
+    if ("sent" in result && result.sent) {
+      await spaceOutNextSend(settings);
+      break;
     }
   }
   return results;
@@ -832,16 +892,39 @@ export async function runDueInitialEmails() {
 export async function runWorkerTick() {
   const initialEmailResults = await runDueInitialEmails();
   const actionResults = await runDueScheduledActions();
-  const replyResults = await runContinuousReplyCheck();
-  let newMailFound = 0;
-  try {
-    newMailFound = (await scanInboxForNewMail()).created;
-  } catch (err) {
-    // Same principle as the per-sequence try/catch inside runContinuousReplyCheck — a failure
-    // scanning for new mail must never take down the rest of the tick (the due-sends above
-    // already happened and shouldn't be reported as a failed tick because of this).
-    console.error("[inbox watch] tick failed:", err);
+
+  // The two Gmail-heavy passes run on their own slower cadence. The tick itself fires every ~30s
+  // so a due send lands close to its scheduled minute, but polling every thread and every inbox
+  // that often would burn Gmail API quota for no benefit — a reply or a new message noticed a
+  // minute or two later costs nothing, a send two minutes late is the bug this all exists to fix.
+  const state = await getWorkerState();
+  const now = Date.now();
+
+  // At most one heavy pass per tick. Both are Gmail-bound and each can take tens of seconds on a
+  // busy account; running them in the same invocation stacks their cost toward the tick route's
+  // 60s ceiling for no reason. Whichever one loses just runs on the next tick, 30s later.
+  let heavyPassRan = false;
+
+  let replyResults: Awaited<ReturnType<typeof runContinuousReplyCheck>> = [];
+  if (!state.lastReplyCheckAt || now - state.lastReplyCheckAt.getTime() >= REPLY_CHECK_INTERVAL_MS) {
+    await prisma.workerHeartbeat.update({ where: { id: state.id }, data: { lastReplyCheckAt: new Date() } });
+    replyResults = await runContinuousReplyCheck();
+    heavyPassRan = true;
   }
+
+  let newMailFound = 0;
+  if (!heavyPassRan && (!state.lastInboxScanAt || now - state.lastInboxScanAt.getTime() >= INBOX_SCAN_INTERVAL_MS)) {
+    await prisma.workerHeartbeat.update({ where: { id: state.id }, data: { lastInboxScanAt: new Date() } });
+    try {
+      newMailFound = (await scanInboxForNewMail()).created;
+    } catch (err) {
+      // Same principle as the per-sequence try/catch inside runContinuousReplyCheck — a failure
+      // scanning for new mail must never take down the rest of the tick (the due-sends above
+      // already happened and shouldn't be reported as a failed tick because of this).
+      console.error("[inbox watch] tick failed:", err);
+    }
+  }
+
   return {
     repliesFound: replyResults.length,
     initialEmailsSent: initialEmailResults.length,

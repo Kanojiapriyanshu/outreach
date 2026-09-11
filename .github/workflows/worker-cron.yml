@@ -1,26 +1,76 @@
 name: Worker tick
 
-# Stands in for a persistent always-on worker process (Render's Background Worker type requires
-# a paid plan) — this pings the app's own /api/cron/tick route on a schedule instead. GitHub
-# Actions cron minimum granularity is 5 minutes, and schedules can slip a few minutes under load;
-# fine for a follow-up scheduler that doesn't need second-level precision.
+# Stands in for a persistent always-on worker process by pinging the app's own /api/cron/tick
+# route on a loop.
+#
+# This deliberately does NOT rely on the cron schedule for timing. GitHub Actions schedules are
+# best-effort and routinely run late — we measured a scheduled email going out 86 minutes after
+# its due time because no run fired in between. So instead of "wake up every 5 minutes and do one
+# tick", each run stays alive for ~55 minutes and ticks every 30 seconds. The schedule below is
+# only a self-healing trigger: it just has to fire *eventually* to start the next long run, not
+# fire precisely.
+#
+# The concurrency group keeps exactly one run working at a time with at most one queued behind
+# it, so overlapping schedule triggers stack up into continuous coverage instead of multiplying.
+# When the running job ends, the queued one starts immediately and the loop continues seamlessly.
+#
+# Safe to overlap: /api/cron/tick claims each row atomically before sending (see
+# lib/scheduler.ts claimScheduledAction), so two ticks can never send the same email twice.
+#
+# This repo is public, so Actions minutes are free and unlimited.
 on:
   schedule:
-    - cron: "*/5 * * * *"
-  workflow_dispatch: {} # lets you trigger a tick manually from the Actions tab too
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {} # lets you trigger a worker run manually from the Actions tab too
+
+concurrency:
+  group: outreach-worker
+  cancel-in-progress: false
 
 jobs:
   tick:
     runs-on: ubuntu-latest
+    # Generous ceiling — the loop below stops itself well before this; this only guards against
+    # a run somehow hanging so it can't block the queued run behind it forever.
+    timeout-minutes: 70
     steps:
-      - name: Hit the worker tick endpoint
+      - name: Tick the worker every 30s for ~55 minutes
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ secrets.APP_URL }}
         run: |
-          status=$(curl -s -o response.json -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.APP_URL }}/api/cron/tick")
-          echo "HTTP status: $status"
-          cat response.json
-          if [ "$status" -ge 300 ]; then
-            echo "Tick request failed"
-            exit 1
-          fi
+          set -u
+          END=$(( $(date +%s) + 55*60 ))
+          fails=0
+          ticks=0
+          while [ "$(date +%s)" -lt "$END" ]; do
+            started=$(date +%s)
+            status=$(curl -s -m 90 -o /tmp/tick.json -w "%{http_code}" \
+              -H "Authorization: Bearer ${CRON_SECRET}" \
+              "${APP_URL}/api/cron/tick" || echo "000")
+            ticks=$((ticks+1))
+
+            if [ "$status" = "200" ]; then
+              fails=0
+              # Only surface ticks that actually did something, so the log stays readable.
+              if ! grep -q '"initialEmailsSent":0,"actionsProcessed":0' /tmp/tick.json 2>/dev/null; then
+                echo "[$(date -u +%H:%M:%S)] $(cat /tmp/tick.json)"
+              fi
+            else
+              fails=$((fails+1))
+              echo "[$(date -u +%H:%M:%S)] tick failed (HTTP $status), consecutive failures: $fails"
+              cat /tmp/tick.json 2>/dev/null || true
+              # Don't fail the whole run on a blip — a deploy restart or cold start will recover.
+              # Bail out only if it's persistently broken, so the queued run can retry fresh.
+              if [ "$fails" -ge 10 ]; then
+                echo "10 consecutive failures — exiting so the next run can start clean."
+                exit 1
+              fi
+            fi
+
+            # Hold a steady 30s cadence regardless of how long the request itself took.
+            elapsed=$(( $(date +%s) - started ))
+            sleep_for=$(( 30 - elapsed ))
+            [ "$sleep_for" -gt 0 ] && sleep "$sleep_for"
+          done
+          echo "Completed $ticks ticks; exiting so the queued run takes over."

@@ -329,6 +329,11 @@ model ScheduledInitialEmail {
   sentSequenceId String?
   error          String?               @db.Text
   createdAt      DateTime              @default(now())
+  /** When it actually went out — recorded so "scheduled for X, sent at Y" is answerable directly
+   * instead of inferred from the resulting sequence's first message. */
+  sentAt         DateTime?
+  /** See ScheduledAction.claimedAt — same overlapping-tick protection. */
+  claimedAt      DateTime?
 
   @@index([status, scheduledAt])
 }
@@ -347,6 +352,16 @@ model ScheduledAction {
   subjectOverride  String?
   bodyOverride     String?                @db.Text
   actionKey        String                 @unique
+  /** Set when a human picked this exact send time by hand. The automatic cadence deliberately
+   * lands inside the configured sending window, but an explicitly chosen time is a decision the
+   * system shouldn't quietly override — these skip the send-time window clamp. */
+  manuallyScheduled Boolean               @default(false)
+  /** Held by whichever tick is currently processing this row. Ticks can overlap now (the worker
+   * loops every ~30s and runs can briefly run concurrently), so the send path claims a row
+   * atomically before doing any Gmail work — without this, two ticks could both read PENDING and
+   * both send. Cleared when the row is left pending; a claim older than CLAIM_STALE_MS is treated
+   * as abandoned so a tick killed mid-send can't strand the row forever. */
+  claimedAt        DateTime?
 
   @@index([status, scheduledAt])
 }
@@ -407,6 +422,16 @@ model WorkerHeartbeat {
   lastRunOk     Boolean  @default(true)
   lastError     String?  @db.Text
   actionsChecked Int     @default(0)
+
+  /** Ticks now run every ~30s so due sends land close to their scheduled minute, but the inbox
+   * passes don't need (and shouldn't burn) that cadence in Gmail API quota — these two stamps let
+   * each pass run on its own slower interval while the send pass runs every single tick. */
+  lastReplyCheckAt  DateTime?
+  lastInboxScanAt   DateTime?
+  /** Anti-burst spacing without blocking the function: after each send this is pushed forward by
+   * a random gap from AutomationSettings, and no send happens before it. Replaces sleeping inside
+   * the tick, which doesn't work once ticks are short and frequent. */
+  nextSendAllowedAt DateTime?
 }
 
 model AutomationSettings {
