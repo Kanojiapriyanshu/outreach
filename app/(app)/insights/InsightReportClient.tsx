@@ -271,7 +271,7 @@ export default function YoutubeInsightReportPage(): React.ReactElement {
 
   const handleBackToAnalyze = (): void => {
     if (shareTokenFromUrl) {
-      router.push("/insight-os");
+      router.push("/insights");
       return;
     }
     router.back();

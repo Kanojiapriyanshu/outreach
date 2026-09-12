@@ -1490,11 +1490,9 @@ export default function YoutubeInsightAnalyzePage({ mode = "auto" }: { mode?: In
             sessionStorage.setItem(REPORT_STORAGE_KEY, JSON.stringify(frontendReport));
             if (reportId) sessionStorage.setItem(REPORT_ID_STORAGE_KEY, reportId);
 
-            if (isBrandMode) {
-                router.push(reportId ? `/brand/insight-os/report?reportId=${reportId}` : "/brand/insight-os/report");
-            } else {
-                router.push(reportId ? `/insight-os/report?reportId=${reportId}` : "/insight-os/report");
-            }
+            // This is the only place reports live here — there's no separate brand-mode route to
+            // branch to, unlike the app this component was ported from.
+            router.push(reportId ? `/insights/report?reportId=${reportId}` : "/insights/report");
         } catch (err) {
             const message = err instanceof Error ? err.message : "Something went wrong while analyzing the video.";
             setError(message);
@@ -1727,7 +1725,7 @@ export default function YoutubeInsightAnalyzePage({ mode = "auto" }: { mode?: In
                     onSearchChange={setReportsSearchTerm}
                     onLoadMore={() => void handleLoadMorePreviousSearches()}
                     onOpenReport={(row) => {
-                        if (row.reportId) router.push(`/brand/insight-os/report?reportId=${encodeURIComponent(row.reportId)}`);
+                        if (row.reportId) router.push(`/insights/report?reportId=${encodeURIComponent(row.reportId)}`);
                     }}
                 />
                 {/* {showBrandOnlySections ? (
