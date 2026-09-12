@@ -15,6 +15,9 @@ const PUBLIC_PATHS = [
   // sent to brands, who have no login here. Revoking a link is handled inside the route.
   "/api/insights/public",
   "/insights/shared",
+  // Shared channel media kits — same reasoning as the Insight OS pair above.
+  "/api/media-kit/public",
+  "/media-kit/shared",
 ];
 
 export async function middleware(req: NextRequest) {

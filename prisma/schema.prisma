@@ -321,6 +321,8 @@ model Creator {
   // original New Outreach flow (which only ever sets the fields above) is unaffected. ---
   /**
    * /**
+   * /**
+   * /**
    * /** YouTube's own channel id (UC...). The dedupe/upsert key across repeat searches — this is
    * what lets the Library grow into a real cache instead of re-discovering the same channel under
    * a new row every time someone searches again.
@@ -702,4 +704,64 @@ model YoutubeApiUsage {
   date      String   @unique
   units     Int      @default(0)
   updatedAt DateTime @updatedAt
+}
+
+/**
+ * A whole-channel performance report — deliberately separate from InsightReport, which is scored
+ * against one specific video. This is the document actually meant to be handed to a brand: "should
+ * we work with this creator at all," not "did this one upload do well." Regenerated fresh each
+ * time (no upsert-by-channel) since a brand conversation usually wants the numbers as of right now.
+ */
+model ChannelMediaKit {
+  id                   String                 @id @default(cuid())
+  channelId            String
+  channelTitle         String
+  channelUrl           String
+  thumbnailUrl         String?
+  country              String?
+  niche                String?
+  subscriberCount      Int                    @default(0)
+  // A big channel's lifetime view count comfortably exceeds Postgres INTEGER's ~2.1B ceiling
+  // (confirmed against a real 3.3B-view channel while testing this) — BigInt is the only field
+  // here that actually needs it; per-video/per-average counts never get close.
+  totalViewCount       BigInt                 @default(0)
+  videoCount           Int                    @default(0)
+  averageViews         Int                    @default(0)
+  engagementRate       Float                  @default(0)
+  /**
+   * averageViews as a percentage of subscriberCount — how much of the audience actually watches
+   * each upload, the single number brands ask about most after subscriber count itself.
+   */
+  viewToSubscriberRate Float                  @default(0)
+  /**
+   * 0-100, see lib/youtube/channelMediaKit.ts's computeBrandFitScore for the formula.
+   */
+  brandFitScore        Float                  @default(0)
+  uploadFrequencyLabel String?
+  /**
+   * Everything the report page renders beyond the lifted columns above: top/recent videos,
+   * category breakdown, platform links, sample comments, and the AI narrative sections.
+   */
+  data                 Json
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  shares               ChannelMediaKitShare[]
+
+  @@index([createdAt])
+  @@index([channelId])
+}
+
+/**
+ * A no-login link to one channel media kit — mirrors InsightReportShare exactly (see that model
+ * for why the token, not the id, is the access control).
+ */
+model ChannelMediaKitShare {
+  id         String          @id @default(cuid())
+  token      String          @unique
+  mediaKitId String
+  mediaKit   ChannelMediaKit @relation(fields: [mediaKitId], references: [id], onDelete: Cascade)
+  createdAt  DateTime        @default(now())
+  revokedAt  DateTime?
+
+  @@index([mediaKitId])
 }

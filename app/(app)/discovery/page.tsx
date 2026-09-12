@@ -105,6 +105,14 @@ async function LibraryTab({ params }: { params: LibrarySearchParams }) {
     }),
   ]);
 
+  const channelIds = creators.map((c) => c.channelId).filter((id): id is string => !!id);
+  const [existingReports, existingMediaKits] = await Promise.all([
+    prisma.insightReport.findMany({ where: { channelId: { in: channelIds } }, select: { id: true, channelId: true }, orderBy: { createdAt: "desc" } }),
+    prisma.channelMediaKit.findMany({ where: { channelId: { in: channelIds } }, select: { id: true, channelId: true }, orderBy: { createdAt: "desc" } }),
+  ]);
+  const reportByChannel = new Map(existingReports.map((r) => [r.channelId, r.id]));
+  const mediaKitByChannel = new Map(existingMediaKits.map((m) => [m.channelId, m.id]));
+
   const cards: CreatorCardData[] = creators.map((c) => ({
     channelId: c.channelId!,
     title: c.name,
@@ -119,7 +127,8 @@ async function LibraryTab({ params }: { params: LibrarySearchParams }) {
     email: c.email,
     platformLinks: (c.platformLinks as Record<string, string>) ?? {},
     alreadyInLibrary: true,
-    existingInsightReportId: null,
+    existingInsightReportId: c.channelId ? (reportByChannel.get(c.channelId) ?? null) : null,
+    existingMediaKitId: c.channelId ? (mediaKitByChannel.get(c.channelId) ?? null) : null,
     creatorId: c.id,
     niche: c.niche ?? "",
   }));

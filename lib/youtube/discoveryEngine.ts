@@ -67,6 +67,10 @@ export interface DiscoveredCreator {
   platformLinks: ExtractedPlatformLinks;
   alreadyInLibrary: boolean;
   existingInsightReportId: string | null;
+  /** Most recent whole-channel media kit already generated for this channel, if any — see
+   * lib/youtube/channelMediaKit.ts. A fresh one is created on demand, not upserted, so this is
+   * always the latest rather than a single canonical row. */
+  existingMediaKitId: string | null;
 }
 
 export interface DiscoverySearchResult {
@@ -200,6 +204,7 @@ export async function runDiscoverySearch(filters: DiscoveryFilters): Promise<Dis
         platformLinks: channel.platformLinks,
         alreadyInLibrary: false,
         existingInsightReportId: null,
+        existingMediaKitId: null,
       };
     })
   );
@@ -208,16 +213,19 @@ export async function runDiscoverySearch(filters: DiscoveryFilters): Promise<Dis
 
   if (results.length > 0) {
     const channelIds = results.map((r) => r.channelId);
-    const [existingCreators, existingReports] = await Promise.all([
+    const [existingCreators, existingReports, existingMediaKits] = await Promise.all([
       prisma.creator.findMany({ where: { channelId: { in: channelIds } }, select: { channelId: true } }),
       prisma.insightReport.findMany({ where: { channelId: { in: channelIds } }, select: { id: true, channelId: true }, orderBy: { createdAt: "desc" } }),
+      prisma.channelMediaKit.findMany({ where: { channelId: { in: channelIds } }, select: { id: true, channelId: true }, orderBy: { createdAt: "desc" } }),
     ]);
     const existingChannelIds = new Set(existingCreators.map((c) => c.channelId));
     const reportByChannel = new Map(existingReports.map((r) => [r.channelId, r.id]));
+    const mediaKitByChannel = new Map(existingMediaKits.map((m) => [m.channelId, m.id]));
 
     for (const r of results) {
       r.alreadyInLibrary = existingChannelIds.has(r.channelId);
       r.existingInsightReportId = reportByChannel.get(r.channelId) ?? null;
+      r.existingMediaKitId = mediaKitByChannel.get(r.channelId) ?? null;
     }
 
     await Promise.all(

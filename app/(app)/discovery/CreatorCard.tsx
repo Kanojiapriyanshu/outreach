@@ -22,6 +22,7 @@ export interface CreatorCardData {
   platformLinks: Record<string, string>;
   alreadyInLibrary: boolean;
   existingInsightReportId: string | null;
+  existingMediaKitId: string | null;
   niche?: string;
 }
 
@@ -164,9 +165,9 @@ export default function CreatorCard({ creator }: { creator: CreatorCardData }) {
           <ExternalLink size={15} />
         </a>
         <MediaKitButton
-          channelUrl={current.channelUrl}
-          existingReportId={current.existingInsightReportId}
-          onReportCreated={(reportId) => setCurrent((prev) => ({ ...prev, existingInsightReportId: reportId }))}
+          creatorId={current.creatorId}
+          existingMediaKitId={current.existingMediaKitId}
+          onMediaKitCreated={(mediaKitId) => setCurrent((prev) => ({ ...prev, existingMediaKitId: mediaKitId }))}
         />
         {current.creatorId && (
           <>
