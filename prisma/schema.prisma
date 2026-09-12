@@ -24,7 +24,9 @@ enum OutreachType {
   CREATOR
 }
 
-/** Only meaningful for the Brand track — direct-to-brand vs. reaching the brand's agency. */
+/**
+ * Only meaningful for the Brand track — direct-to-brand vs. reaching the brand's agency.
+ */
 enum RecipientType {
   DIRECT
   AGENCY
@@ -56,8 +58,10 @@ enum SequenceStatus {
   FOLLOW_UP_1_SENT
   FOLLOW_UP_2_SENT
   FOLLOW_UP_3_SENT
-  /** Only reached by the creator-list nudge cadence — a final CEO-voice close-out sent after 3
-   * nudges with no reply. The standard Email 1 -> Follow-up 1/2/3 cadence never reaches this. */
+  /**
+   * Only reached by the creator-list nudge cadence — a final CEO-voice close-out sent after 3
+   * nudges with no reply. The standard Email 1 -> Follow-up 1/2/3 cadence never reaches this.
+   */
   FOLLOW_UP_4_SENT
   REPLIED
   BOUNCED
@@ -84,10 +88,12 @@ enum PipelineStage {
   DEAL
 }
 
-/** TEMPLATE = one of the canned Brand/Creator step templates. CREATOR_LIST_NUDGE = a nudge asking
+/**
+ * TEMPLATE = one of the canned Brand/Creator step templates. CREATOR_LIST_NUDGE = a nudge asking
  * whether they've had a chance to look at the creator list. TEAM_CHECK_NUDGE = a nudge asking
  * whether they've had a chance to check internally, sent after a non-committal reply.
- * GENERIC_NUDGE = a content-agnostic fallback for a manual send that doesn't fit either case. */
+ * GENERIC_NUDGE = a content-agnostic fallback for a manual send that doesn't fit either case.
+ */
 enum ScheduledActionKind {
   TEMPLATE
   CREATOR_LIST_NUDGE
@@ -95,8 +101,24 @@ enum ScheduledActionKind {
   GENERIC_NUDGE
 }
 
-/** Whether an EmailMessage was sent by this system or typed directly in Gmail by the team and
- * only picked up afterward while scanning the thread. */
+enum ScheduledInitialEmailKind {
+  /**
+   * payload is a ComposeEmailInput — sending it creates a Brand/Creator + OutreachSequence and
+   * queues the normal follow-up cadence, exactly like the guided New Outreach flow.
+   */
+  SEQUENCE
+  /**
+   * payload is a plain to/cc/bcc/subject/html/attachments send with no outreach tracking —
+   * composing an email the classifier reads as neither brand nor creator outreach still gets
+   * Gmail-style schedule send, it just doesn't enter the follow-up system.
+   */
+  PLAIN
+}
+
+/**
+ * Whether an EmailMessage was sent by this system or typed directly in Gmail by the team and
+ * only picked up afterward while scanning the thread.
+ */
 enum MessageSource {
   SYSTEM
   MANUAL
@@ -151,40 +173,44 @@ enum ActivityEventType {
 }
 
 model User {
-  id           String        @id @default(cuid())
-  name         String
-  email        String        @unique
-  passwordHash String?
-  timezone     String        @default("Asia/Kolkata")
-  role         String        @default("admin")
-  createdAt    DateTime      @default(now())
+  id            String         @id @default(cuid())
+  name          String
+  email         String         @unique
+  passwordHash  String?
+  timezone      String         @default("Asia/Kolkata")
+  role          String         @default("admin")
+  createdAt     DateTime       @default(now())
   emailAccounts EmailAccount[]
 }
 
 model EmailAccount {
-  id              String            @id @default(cuid())
-  userId          String
-  user            User              @relation(fields: [userId], references: [id])
-  provider        EmailProvider     @default(GMAIL)
-  email           String            @unique
-  accessToken     String?           @db.Text
-  refreshToken    String?           @db.Text
-  tokenExpiry     DateTime?
-  accessStatus    EmailAccessStatus @default(DISCONNECTED)
-  timezone        String            @default("Asia/Kolkata")
-  dailySendLimit  Int               @default(450)
-  createdAt       DateTime          @default(now())
+  id             String            @id @default(cuid())
+  userId         String
+  user           User              @relation(fields: [userId], references: [id])
+  provider       EmailProvider     @default(GMAIL)
+  email          String            @unique
+  accessToken    String?           @db.Text
+  refreshToken   String?           @db.Text
+  tokenExpiry    DateTime?
+  accessStatus   EmailAccessStatus @default(DISCONNECTED)
+  timezone       String            @default("Asia/Kolkata")
+  dailySendLimit Int               @default(450)
+  createdAt      DateTime          @default(now())
 
-  /** Gmail's own change cursor. Incremental syncs ask Gmail "what changed since this point"
+  /**
+   * Gmail's own change cursor. Incremental syncs ask Gmail "what changed since this point"
    * instead of re-listing the mailbox, which is what keeps sync cost flat as the mailbox grows.
    * Gmail expires these after about a week, so the sync falls back to a bounded full list when
-   * it's missing or rejected. */
+   * it's missing or rejected.
+   */
   lastHistoryId String?
   inboxSyncedAt DateTime?
-  /** Scopes Google actually granted at connect time. Stored so the app can tell the difference
+  /**
+   * Scopes Google actually granted at connect time. Stored so the app can tell the difference
    * between "two-way inbox sync is off" and "it's broken" — an account connected before
    * gmail.modify was requested keeps working read-only until it's reconnected, and this is what
-   * lets the UI say so plainly instead of failing silently. */
+   * lets the UI say so plainly instead of failing silently.
+   */
   grantedScopes String?   @db.Text
 
   sequences    OutreachSequence[]
@@ -195,37 +221,42 @@ model EmailAccount {
  * A Gmail conversation, mirrored locally so the app has a real inbox of its own rather than a
  * notification feed pointing at Gmail. Thread-level state (read, starred, archived) is synced
  * both ways with Gmail's own labels, so acting here acts on the real mailbox and vice versa.
- *
  * Only metadata lives here by default — message bodies are fetched on demand the first time a
  * thread is opened and then cached (bodiesFetchedAt). That keeps the sync cheap and the database
  * small no matter how large the mailbox gets, which is the difference between this working for a
  * week and working for years.
  */
 model InboxThread {
-  id             String       @id @default(cuid())
-  emailAccountId String
-  emailAccount   EmailAccount @relation(fields: [emailAccountId], references: [id])
-  gmailThreadId  String
-  subject        String
-  snippet        String       @db.Text
-  /** Whoever the conversation is *with* — the other party, not us. What the list column shows. */
-  fromName       String
-  fromAddress    String
-  lastMessageAt  DateTime
-  messageCount   Int          @default(1)
-  isUnread       Boolean      @default(true)
-  isStarred      Boolean      @default(false)
-  /** No INBOX label in Gmail — archived (or never in the inbox to begin with). */
-  isArchived     Boolean      @default(false)
-  isTrashed      Boolean      @default(false)
-  isSent         Boolean      @default(false)
-  /** Set when this conversation belongs to an outreach sequence the CRM is running, which is what
-   * lets the inbox show pipeline context inline and decide follow-up handling on a reply. */
-  sequenceId     String?
-  sequence       OutreachSequence? @relation(fields: [sequenceId], references: [id])
+  id              String            @id @default(cuid())
+  emailAccountId  String
+  emailAccount    EmailAccount      @relation(fields: [emailAccountId], references: [id])
+  gmailThreadId   String
+  subject         String
+  snippet         String            @db.Text
+  /**
+   * Whoever the conversation is *with* — the other party, not us. What the list column shows.
+   */
+  fromName        String
+  fromAddress     String
+  lastMessageAt   DateTime
+  messageCount    Int               @default(1)
+  isUnread        Boolean           @default(true)
+  isStarred       Boolean           @default(false)
+  /**
+   * No INBOX label in Gmail — archived (or never in the inbox to begin with).
+   */
+  isArchived      Boolean           @default(false)
+  isTrashed       Boolean           @default(false)
+  isSent          Boolean           @default(false)
+  /**
+   * Set when this conversation belongs to an outreach sequence the CRM is running, which is what
+   * lets the inbox show pipeline context inline and decide follow-up handling on a reply.
+   */
+  sequenceId      String?
+  sequence        OutreachSequence? @relation(fields: [sequenceId], references: [id])
   bodiesFetchedAt DateTime?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
 
   messages InboxMessage[]
 
@@ -236,7 +267,9 @@ model InboxThread {
   @@index([sequenceId])
 }
 
-/** One message inside an InboxThread. Bodies are populated lazily — see InboxThread. */
+/**
+ * One message inside an InboxThread. Bodies are populated lazily — see InboxThread.
+ */
 model InboxMessage {
   id             String           @id @default(cuid())
   threadId       String
@@ -245,7 +278,7 @@ model InboxMessage {
   fromName       String
   fromAddress    String
   toAddresses    String           @db.Text
-  ccAddresses    String           @db.Text @default("")
+  ccAddresses    String           @default("") @db.Text
   subject        String
   snippet        String           @db.Text
   bodyText       String?          @db.Text
@@ -258,20 +291,20 @@ model InboxMessage {
 }
 
 model Brand {
-  id                  String      @id @default(cuid())
-  name                String
-  website             String?
-  category            String?
-  isAgency            Boolean     @default(false)
-  budgetRangeText     String?
-  budgetType          BudgetType  @default(UNKNOWN)
-  influencerRangeMin  Int?
-  influencerRangeMax  Int?
-  deliverables        String?
-  campaignTimeline    String?
-  notes               String?     @db.Text
-  createdAt           DateTime    @default(now())
-  contacts            Contact[]
+  id                 String     @id @default(cuid())
+  name               String
+  website            String?
+  category           String?
+  isAgency           Boolean    @default(false)
+  budgetRangeText    String?
+  budgetType         BudgetType @default(UNKNOWN)
+  influencerRangeMin Int?
+  influencerRangeMax Int?
+  deliverables       String?
+  campaignTimeline   String?
+  notes              String?    @db.Text
+  createdAt          DateTime   @default(now())
+  contacts           Contact[]
 }
 
 model Creator {
@@ -302,39 +335,47 @@ model Contact {
 }
 
 model OutreachSequence {
-  id                String         @id @default(cuid())
-  outreachType      OutreachType
-  recipientType     RecipientType  @default(DIRECT)
-  contactId         String
-  contact           Contact        @relation(fields: [contactId], references: [id])
-  emailAccountId    String
-  emailAccount      EmailAccount   @relation(fields: [emailAccountId], references: [id])
-  threadId          String
-  initialMessageId  String
-  currentStep       Int            @default(0)
-  status            SequenceStatus @default(NEW)
-  stage             PipelineStage  @default(FIRST_EMAIL_SENT)
-  lastKnownMsgCount Int            @default(1)
-  variables         Json           @default("{}")
-  /** Set (and re-set on every later reply) whenever the contact replies after the creator list has
+  id                    String         @id @default(cuid())
+  outreachType          OutreachType
+  recipientType         RecipientType  @default(DIRECT)
+  contactId             String
+  contact               Contact        @relation(fields: [contactId], references: [id])
+  emailAccountId        String
+  emailAccount          EmailAccount   @relation(fields: [emailAccountId], references: [id])
+  threadId              String
+  initialMessageId      String
+  currentStep           Int            @default(0)
+  status                SequenceStatus @default(NEW)
+  stage                 PipelineStage  @default(FIRST_EMAIL_SENT)
+  lastKnownMsgCount     Int            @default(1)
+  variables             Json           @default("{}")
+  /**
+   * Set (and re-set on every later reply) whenever the contact replies after the creator list has
    * gone out — the dashboard's green "Response Received" indicator for that track. Also settable
    * by hand from the dashboard as a manual backstop, and cleared automatically when a fresh
-   * creator list goes out for a new round. */
+   * creator list goes out for a new round.
+   */
   creatorListResponseAt DateTime?
-  /** Gmail-style star — a manual "don't lose track of this one" flag, independent of pipeline
-   * stage or status. */
-  isImportant       Boolean        @default(false)
-  /** Soft-delete (Trash) — set when the team deletes a thread from the CRM; the worker stops
+  /**
+   * Gmail-style star — a manual "don't lose track of this one" flag, independent of pipeline
+   * stage or status.
+   */
+  isImportant           Boolean        @default(false)
+  /**
+   * Soft-delete (Trash) — set when the team deletes a thread from the CRM; the worker stops
    * touching it (no more reply checks or scheduled sends) but the row and its history stay until
-   * a separate permanent delete. Null = not in Trash. */
-  deletedAt         DateTime?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+   * a separate permanent delete. Null = not in Trash.
+   */
+  deletedAt             DateTime?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
 
-  /** When the reply-check pass last looked at this thread. The pass is time-bounded, so it
+  /**
+   * When the reply-check pass last looked at this thread. The pass is time-bounded, so it
    * processes least-recently-checked first — without that it would restart from the same order
    * every tick and anything past the cutoff would never get checked at all once there are more
-   * active sequences than fit in one pass. */
+   * active sequences than fit in one pass.
+   */
   lastReplyCheckAt DateTime?
 
   scheduledActions ScheduledAction[]
@@ -354,18 +395,20 @@ model OutreachSequence {
  * compose flow.
  */
 model Draft {
-  id            String        @id @default(cuid())
-  outreachType  OutreachType
-  recipientType RecipientType @default(DIRECT)
-  contactEmail  String        @default("")
-  contactName   String        @default("")
+  id             String        @id @default(cuid())
+  outreachType   OutreachType
+  recipientType  RecipientType @default(DIRECT)
+  contactEmail   String        @default("")
+  contactName    String        @default("")
   emailAccountId String?
-  /** The rest of the compose form, as typed — brand/creator details, subject/body overrides,
+  /**
+   * The rest of the compose form, as typed — brand/creator details, subject/body overrides,
    * template variables. Same shape as ComposeEmailInput; stored as-is since a draft is inherently
-   * partial/unvalidated (that's the point — it doesn't have to be ready to send yet). */
-  payload       Json          @default("{}")
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+   * partial/unvalidated (that's the point — it doesn't have to be ready to send yet).
+   */
+  payload        Json          @default("{}")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   @@index([updatedAt])
 }
@@ -378,61 +421,72 @@ model Draft {
  * (composeAndSendInitialEmail) once due.
  */
 model ScheduledInitialEmail {
-  id             String                @id @default(cuid())
+  id             String                    @id @default(cuid())
   scheduledAt    DateTime
-  status         ScheduledActionStatus @default(PENDING)
+  status         ScheduledActionStatus     @default(PENDING)
+  kind           ScheduledInitialEmailKind @default(SEQUENCE)
   payload        Json
   sentSequenceId String?
-  error          String?               @db.Text
-  createdAt      DateTime              @default(now())
-  /** When it actually went out — recorded so "scheduled for X, sent at Y" is answerable directly
-   * instead of inferred from the resulting sequence's first message. */
+  error          String?                   @db.Text
+  createdAt      DateTime                  @default(now())
+  /**
+   * When it actually went out — recorded so "scheduled for X, sent at Y" is answerable directly
+   * instead of inferred from the resulting sequence's first message.
+   */
   sentAt         DateTime?
-  /** See ScheduledAction.claimedAt — same overlapping-tick protection. */
+  /**
+   * See ScheduledAction.claimedAt — same overlapping-tick protection.
+   */
   claimedAt      DateTime?
 
   @@index([status, scheduledAt])
 }
 
 model ScheduledAction {
-  id               String                 @id @default(cuid())
-  sequenceId       String
-  sequence         OutreachSequence       @relation(fields: [sequenceId], references: [id])
-  step             Int
-  scheduledAt      DateTime
-  status           ScheduledActionStatus  @default(PENDING)
-  kind             ScheduledActionKind    @default(TEMPLATE)
-  templateVersion  Int?
-  /** Set when the team edited this specific upcoming send's preview directly — takes over from
-   * the live-rendered template/nudge content when present. Cleared to go back to auto-render. */
-  subjectOverride  String?
-  bodyOverride     String?                @db.Text
-  actionKey        String                 @unique
-  /** Set when a human picked this exact send time by hand. The automatic cadence deliberately
+  id                String                @id @default(cuid())
+  sequenceId        String
+  sequence          OutreachSequence      @relation(fields: [sequenceId], references: [id])
+  step              Int
+  scheduledAt       DateTime
+  status            ScheduledActionStatus @default(PENDING)
+  kind              ScheduledActionKind   @default(TEMPLATE)
+  templateVersion   Int?
+  /**
+   * Set when the team edited this specific upcoming send's preview directly — takes over from
+   * the live-rendered template/nudge content when present. Cleared to go back to auto-render.
+   */
+  subjectOverride   String?
+  bodyOverride      String?               @db.Text
+  actionKey         String                @unique
+  /**
+   * Set when a human picked this exact send time by hand. The automatic cadence deliberately
    * lands inside the configured sending window, but an explicitly chosen time is a decision the
-   * system shouldn't quietly override — these skip the send-time window clamp. */
+   * system shouldn't quietly override — these skip the send-time window clamp.
+   */
   manuallyScheduled Boolean               @default(false)
-  /** Held by whichever tick is currently processing this row. Ticks can overlap now (the worker
+  /**
+   * Held by whichever tick is currently processing this row. Ticks can overlap now (the worker
    * loops every ~30s and runs can briefly run concurrently), so the send path claims a row
    * atomically before doing any Gmail work — without this, two ticks could both read PENDING and
    * both send. Cleared when the row is left pending; a claim older than CLAIM_STALE_MS is treated
-   * as abandoned so a tick killed mid-send can't strand the row forever. */
-  claimedAt        DateTime?
+   * as abandoned so a tick killed mid-send can't strand the row forever.
+   */
+  claimedAt         DateTime?
 
   @@index([status, scheduledAt])
 }
 
 model EmailMessage {
-  id                 String            @id @default(cuid())
-  sequenceId         String
-  sequence           OutreachSequence  @relation(fields: [sequenceId], references: [id])
-  providerMessageId  String
-  direction          MessageDirection
-  source             MessageSource     @default(SYSTEM)
-  subject            String
-  body               String            @db.Text
-  sentAt             DateTime
-  status             MessageStatus     @default(SENT)
+  id                String           @id @default(cuid())
+  sequenceId        String
+  sequence          OutreachSequence @relation(fields: [sequenceId], references: [id])
+  providerMessageId String
+  direction         MessageDirection
+  source            MessageSource    @default(SYSTEM)
+  subject           String
+  body              String           @db.Text
+  sentAt            DateTime
+  status            MessageStatus    @default(SENT)
 
   @@index([sequenceId])
 }
@@ -473,31 +527,41 @@ model SuppressedContact {
 }
 
 model WorkerHeartbeat {
-  id            String   @id @default(cuid())
-  lastRunAt     DateTime
-  lastRunOk     Boolean  @default(true)
-  lastError     String?  @db.Text
-  actionsChecked Int     @default(0)
+  id             String   @id @default(cuid())
+  lastRunAt      DateTime
+  lastRunOk      Boolean  @default(true)
+  lastError      String?  @db.Text
+  actionsChecked Int      @default(0)
 
-  /** Ticks now run every ~30s so due sends land close to their scheduled minute, but the inbox
+  /**
+   * Ticks now run every ~30s so due sends land close to their scheduled minute, but the inbox
    * passes don't need (and shouldn't burn) that cadence in Gmail API quota — these two stamps let
-   * each pass run on its own slower interval while the send pass runs every single tick. */
+   * each pass run on its own slower interval while the send pass runs every single tick.
+   */
   lastReplyCheckAt  DateTime?
   lastInboxScanAt   DateTime?
-  /** Anti-burst spacing without blocking the function: after each send this is pushed forward by
+  /**
+   * Anti-burst spacing without blocking the function: after each send this is pushed forward by
    * a random gap from AutomationSettings, and no send happens before it. Replaces sleeping inside
-   * the tick, which doesn't work once ticks are short and frequent. */
+   * the tick, which doesn't work once ticks are short and frequent.
+   */
   nextSendAllowedAt DateTime?
 }
 
 model AutomationSettings {
   id                    String   @id @default(cuid())
-  /** Business days from Email 1 to Follow-up #1 (default: next business day). */
+  /**
+   * Business days from Email 1 to Follow-up #1 (default: next business day).
+   */
   brandDelayDays1       Int      @default(1)
-  /** Business days from Follow-up #1 to Follow-up #2. */
+  /**
+   * Business days from Follow-up #1 to Follow-up #2.
+   */
   brandDelayDays2       Int      @default(2)
-  /** Business days from Follow-up #2 to Follow-up #3 — after this, no reply moves the sequence
-   * to Completed and the pipeline stage to Not Interested automatically. */
+  /**
+   * Business days from Follow-up #2 to Follow-up #3 — after this, no reply moves the sequence
+   * to Completed and the pipeline stage to Not Interested automatically.
+   */
   brandDelayDays3       Int      @default(2)
   creatorDelayDays1     Int      @default(1)
   creatorDelayDays2     Int      @default(2)
@@ -509,14 +573,15 @@ model AutomationSettings {
   sendWindowDays        String   @default("MON,TUE,WED,THU,FRI")
   sendSpacingSecondsMin Int      @default(30)
   sendSpacingSecondsMax Int      @default(180)
-  /** Days to wait before nudging again after a non-committal reply ("ok, will check and revert"). */
+  /**
+   * Days to wait before nudging again after a non-committal reply ("ok, will check and revert").
+   */
   nonCommittalDelayDays Int      @default(2)
   updatedAt             DateTime @updatedAt
 }
 
 /**
  * A generated Insight OS report for a single YouTube video.
- *
  * The report itself is a deeply nested document (hero stats, comment intelligence, estimates, AI
  * verdict) that nothing ever queries *into* — it's written once and rendered whole. So it lives in
  * a JSON column rather than being shredded across dozens of relational tables. The handful of
@@ -533,7 +598,9 @@ model InsightReport {
   thumbnailUrl   String?
   viewCount      Int       @default(0)
   engagementRate Float     @default(0)
-  /** The engine's overall 0-100 score, shown as "AI Score" in the reports list. */
+  /**
+   * The engine's overall 0-100 score, shown as "AI Score" in the reports list.
+   */
   finalScore     Float     @default(0)
   verdict        String?
   publishedAt    DateTime?
@@ -548,14 +615,18 @@ model InsightReport {
   @@index([channelId])
 }
 
-/** A no-login link to one report. The token is the access control, so it's random and unique. */
+/**
+ * A no-login link to one report. The token is the access control, so it's random and unique.
+ */
 model InsightReportShare {
   id        String        @id @default(cuid())
   token     String        @unique
   reportId  String
   report    InsightReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
   createdAt DateTime      @default(now())
-  /** Set to withdraw a link that's already been sent out, without deleting the report. */
+  /**
+   * Set to withdraw a link that's already been sent out, without deleting the report.
+   */
   revokedAt DateTime?
 
   @@index([reportId])

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { gmailClientFor, sendRichEmail, type OutgoingAttachment } from "@/lib/gmail";
 import { syncInbox } from "@/lib/inboxSync";
+import { schedulePlainEmail } from "@/lib/trackSequence";
 
 export const maxDuration = 60;
 
@@ -20,6 +21,11 @@ interface SendBody {
   html: string;
   attachments?: OutgoingAttachment[];
   emailAccountId?: string;
+  /** Gmail-style schedule send for an email the outbound classifier read as neither brand nor
+   * creator outreach (or that was explicitly marked "just an email"). Brand/creator outreach is
+   * scheduled through /api/sequences/compose instead, since that path also needs to create the
+   * sequence and follow-up cadence — this one never does. */
+  scheduledAt?: string;
 }
 
 function isValidEmailList(value: string): boolean {
@@ -70,6 +76,26 @@ export async function POST(req: NextRequest) {
   const suppressed = await prisma.suppressedContact.findFirst({ where: { email: { in: recipients } } });
   if (suppressed) {
     return NextResponse.json({ error: `${suppressed.email} has opted out and can't be emailed.` }, { status: 400 });
+  }
+
+  // A future send time behaves exactly like Gmail's "Schedule send" — same idea as
+  // /api/sequences/compose, just for a plain email with no outreach tracking attached.
+  const scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
+  if (scheduledAt && !Number.isNaN(scheduledAt.getTime()) && scheduledAt.getTime() > Date.now() + 60_000) {
+    const result = await schedulePlainEmail(
+      {
+        emailAccountId: account.id,
+        to,
+        cc: body.cc?.trim() || undefined,
+        bcc: body.bcc?.trim() || undefined,
+        subject: body.subject?.trim() || "(no subject)",
+        html: body.html || "",
+        attachments,
+      },
+      scheduledAt
+    );
+    if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+    return NextResponse.json({ scheduled: true, scheduledAt: result.scheduledAt });
   }
 
   try {

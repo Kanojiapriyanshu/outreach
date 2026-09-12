@@ -120,7 +120,7 @@ function base64UrlDecode(data: string): string {
 
 /** Strips tags/entities from an HTML body down to readable plain text — good enough for feeding an
  * extractor, not for display. */
-function htmlToPlainText(html: string): string {
+export function htmlToPlainText(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<script[\s\S]*?<\/script>/gi, " ")

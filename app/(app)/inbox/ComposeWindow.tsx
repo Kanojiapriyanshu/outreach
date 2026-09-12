@@ -1,9 +1,20 @@
 "use client";
 
-import { useState } from "react";
-import { X, Minus, Maximize2, Minimize2, Trash2, Send, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { X, Minus, Maximize2, Minimize2, Trash2 } from "lucide-react";
 import RichTextEditor from "./RichTextEditor";
 import { useAttachments, AttachmentList, TemplatePicker, templateToHtml } from "./composerParts";
+import ClassificationPicker, { effectiveClassification, type ClassificationChoice } from "./ClassificationPicker";
+import SchedulePicker from "./SchedulePicker";
+import EmailPreviewModal from "./EmailPreviewModal";
+import type { OutboundGuess } from "@/lib/outboundClassifier";
+import type { ComposeEmailInput } from "@/lib/trackSequence";
+
+function labelForPreview(c: ClassificationChoice): string {
+  if (c.outreachType === "CREATOR") return "Creator outreach";
+  if (c.outreachType === "BRAND") return c.recipientType === "AGENCY" ? "Agency outreach" : "Brand outreach";
+  return "Just an email — no follow-up";
+}
 
 export default function ComposeWindow({ onClose, onSent }: { onClose: () => void; onSent: () => void }) {
   const [minimized, setMinimized] = useState(false);
@@ -19,27 +30,120 @@ export default function ComposeWindow({ onClose, onSent }: { onClose: () => void
   // No clear() needed here: discarding closes the whole window, which unmounts this state.
   const { attachments, removeAt, totalBytes, AttachButton } = useAttachments();
 
+  // --- Who this is actually for, and whether that means follow-ups (see lib/outboundClassifier.ts) ---
+  const [autoGuess, setAutoGuess] = useState<OutboundGuess | null>(null);
+  const [classificationOverride, setClassificationOverride] = useState<ClassificationChoice | null>(null);
+  const [contactName, setContactName] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const classification = effectiveClassification(autoGuess, classificationOverride);
+
+  // Re-guesses on a short pause after the recipient/subject/body change — cheap (keyword scoring
+  // plus one indexed lookup), so debouncing is just about not firing on every keystroke rather
+  // than about cost. Stops once the team has picked something by hand; their choice shouldn't
+  // flicker back to "auto" just because they kept typing the email.
+  useEffect(() => {
+    if (!to.trim() || classificationOverride) return;
+    const timeout = setTimeout(() => {
+      fetch("/api/inbox/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to, subject, html }),
+      })
+        .then((r) => r.json())
+        .then((data) => setAutoGuess(data.guess ?? null))
+        .catch(() => {});
+    }, 600);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [to, subject, html, classificationOverride]);
+
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function send() {
+  // A time picked from SchedulePicker doesn't schedule anything by itself — it opens the preview
+  // below, and scheduling only actually happens if that's confirmed there.
+  const [pendingScheduleAt, setPendingScheduleAt] = useState<Date | null>(null);
+
+  function validateRecipient(): string | null {
+    if (!to.trim()) return "Add at least one recipient";
+    const addresses = to.split(",").map((s) => s.trim()).filter(Boolean);
+    if (classification.outreachType && addresses.length > 1) {
+      return "Outreach emails can only go to one person — remove the extra recipients, or switch to \"Just an email\" above.";
+    }
+    if (classification.outreachType && !contactName.trim()) {
+      return "Add their name — the CRM needs it to track this outreach.";
+    }
+    if (classification.outreachType === "BRAND" && !companyName.trim()) {
+      return classification.recipientType === "AGENCY" ? "Add the agency's name" : "Add the brand or company name";
+    }
+    return null;
+  }
+
+  /** Builds the one request body shared by immediate send and scheduled send for whichever path
+   * the classification points at — only the endpoint and whether `scheduledAt` is set differ. */
+  // Same shape /api/sequences/compose expects, except emailAccountId is optional here — the
+  // inbox Compose window has no account picker, so the route resolves the connected account
+  // itself when this is left out (see that route's handling of a missing emailAccountId).
+  type ComposeRequestBody = Omit<ComposeEmailInput, "emailAccountId"> & { emailAccountId?: string; scheduledAt?: string };
+
+  function buildRequest(scheduledAt?: Date) {
+    if (classification.outreachType) {
+      // Typed against the real backend input so a renamed/mistyped field here is a build error,
+      // not a silently-ignored one — e.g. this used to send `subject` instead of
+      // `templateOverrideSubject`, which composeAndSendInitialEmail simply doesn't read.
+      const body: ComposeRequestBody = {
+        outreachType: classification.outreachType,
+        recipientType: classification.outreachType === "BRAND" ? classification.recipientType : undefined,
+        contactEmail: to.trim(),
+        contactName: contactName.trim(),
+        brand: classification.outreachType === "BRAND" ? { name: companyName.trim() } : undefined,
+        creator: classification.outreachType === "CREATOR" ? { name: contactName.trim() } : undefined,
+        variables: {},
+        html,
+        cc: cc.trim() || undefined,
+        bcc: bcc.trim() || undefined,
+        templateOverrideSubject: subject.trim() || "(no subject)",
+        attachments: attachments.map(({ filename, mimeType, data }) => ({ filename, mimeType, data })),
+        scheduledAt: scheduledAt?.toISOString(),
+      };
+      return { url: "/api/sequences/compose", body };
+    }
+    return {
+      url: "/api/inbox/send",
+      body: {
+        to: to.trim(),
+        cc: cc.trim() || undefined,
+        bcc: bcc.trim() || undefined,
+        subject: subject.trim(),
+        html,
+        attachments: attachments.map(({ filename, mimeType, data }) => ({ filename, mimeType, data })),
+        scheduledAt: scheduledAt?.toISOString(),
+      },
+    };
+  }
+
+  async function submit(scheduledAt?: Date) {
+    const { url, body } = buildRequest(scheduledAt);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Couldn't send that");
+    return data;
+  }
+
+  async function sendNow() {
+    const validationError = validateRecipient();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
     setSending(true);
     setError(null);
     try {
-      const res = await fetch("/api/inbox/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to,
-          cc: cc || undefined,
-          bcc: bcc || undefined,
-          subject,
-          html,
-          attachments: attachments.map(({ filename, mimeType, data }) => ({ filename, mimeType, data })),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Couldn't send that");
+      await submit();
       onSent();
       onClose();
     } catch (e) {
@@ -47,6 +151,24 @@ export default function ComposeWindow({ onClose, onSent }: { onClose: () => void
     } finally {
       setSending(false);
     }
+  }
+
+  function openSchedulePreview(date: Date) {
+    const validationError = validateRecipient();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    setError(null);
+    setPendingScheduleAt(date);
+  }
+
+  async function confirmSchedule() {
+    if (!pendingScheduleAt) return;
+    await submit(pendingScheduleAt);
+    setPendingScheduleAt(null);
+    onSent();
+    onClose();
   }
 
   function discard() {
@@ -75,6 +197,22 @@ export default function ComposeWindow({ onClose, onSent }: { onClose: () => void
 
   return (
     <div className={frameClass} style={{ boxShadow: "var(--shadow-card)" }}>
+      {pendingScheduleAt && (
+        <EmailPreviewModal
+          fromEmail={null}
+          to={to.trim()}
+          cc={cc.trim() || undefined}
+          bcc={bcc.trim() || undefined}
+          subject={subject.trim() || "(no subject)"}
+          html={html}
+          attachments={attachments}
+          scheduledAt={pendingScheduleAt}
+          classificationLabel={labelForPreview(classification)}
+          onEdit={() => setPendingScheduleAt(null)}
+          onConfirm={confirmSchedule}
+        />
+      )}
+
       {/* Title bar */}
       <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--border)] shrink-0" style={{ background: "var(--bg)" }}>
         <span className="text-sm font-medium text-[var(--ink)]">New Message</span>
@@ -126,6 +264,18 @@ export default function ComposeWindow({ onClose, onSent }: { onClose: () => void
           className="w-full bg-transparent outline-none text-[13.5px] text-[var(--ink)] placeholder:text-[var(--muted-2)] border-b border-[var(--border)] py-1.5"
         />
 
+        {to.trim() && (
+          <ClassificationPicker
+            guess={autoGuess}
+            override={classificationOverride}
+            onOverride={setClassificationOverride}
+            contactName={contactName}
+            onContactNameChange={setContactName}
+            companyName={companyName}
+            onCompanyNameChange={setCompanyName}
+          />
+        )}
+
         {/* Templates — the CRM already has the team's approved copy, so composing from it beats
             retyping it or pasting from somewhere else. */}
         <div className="py-2">
@@ -155,14 +305,7 @@ export default function ComposeWindow({ onClose, onSent }: { onClose: () => void
 
       {/* Action bar */}
       <div className="flex items-center gap-2 px-3.5 py-2.5 border-t border-[var(--border)] shrink-0">
-        <button
-          onClick={send}
-          disabled={sending || !to.trim()}
-          className="btn-primary inline-flex items-center gap-1.5 px-5 py-2 text-sm disabled:opacity-50"
-        >
-          {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-          {sending ? "Sending…" : "Send"}
-        </button>
+        <SchedulePicker disabled={sending || !to.trim()} sending={sending} onSendNow={sendNow} onPickTime={openSchedulePreview} />
 
         <AttachButton />
 

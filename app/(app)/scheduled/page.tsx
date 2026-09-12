@@ -8,13 +8,34 @@ import ScheduledEmailActions from "./ScheduledEmailActions";
 // whatever was scheduled (or not) at build time instead of what's actually pending right now.
 export const dynamic = "force-dynamic";
 
-interface ComposePayload {
+interface SequencePayload {
   outreachType: "BRAND" | "CREATOR";
   recipientType?: "DIRECT" | "AGENCY";
   contactEmail: string;
   contactName: string;
   brand?: { name: string; campaignName?: string };
   creator?: { name: string };
+}
+
+interface PlainPayload {
+  to: string;
+  subject: string;
+}
+
+/** Normalizes either payload shape (see ScheduledInitialEmailKind) into what the table below
+ * actually renders, so the JSX doesn't need to branch on `kind` in five different places. */
+function describeRow(kind: "SEQUENCE" | "PLAIN", payload: unknown) {
+  if (kind === "PLAIN") {
+    const p = payload as PlainPayload;
+    return { name: p.subject || "(no subject)", email: p.to, typeLabel: "General email", companyOrCreator: "—" };
+  }
+  const p = payload as SequencePayload;
+  return {
+    name: p.contactName || "—",
+    email: p.contactEmail,
+    typeLabel: p.outreachType === "BRAND" ? (p.recipientType === "AGENCY" ? "Agency" : "Brand") : "Creator",
+    companyOrCreator: p.brand?.campaignName || p.brand?.name || p.creator?.name || "—",
+  };
 }
 
 const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
@@ -95,18 +116,15 @@ export default async function ScheduledPage() {
               </tr>
             )}
             {pending.map((s) => {
-              const payload = s.payload as unknown as ComposePayload;
-              const companyOrCreator = payload.brand?.campaignName || payload.brand?.name || payload.creator?.name || "—";
+              const row = describeRow(s.kind, s.payload);
               return (
                 <tr key={s.id} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg)] transition-colors">
                   <td className="px-5 py-3.5">
-                    <div className="font-medium text-[var(--ink)]">{payload.contactName || "—"}</div>
-                    <div className="text-[var(--muted-2)] text-xs">{payload.contactEmail}</div>
+                    <div className="font-medium text-[var(--ink)]">{row.name}</div>
+                    <div className="text-[var(--muted-2)] text-xs">{row.email}</div>
                   </td>
-                  <td className="px-5 py-3.5 text-[var(--muted)]">
-                    {payload.outreachType === "BRAND" ? (payload.recipientType === "AGENCY" ? "Agency" : "Brand") : "Creator"}
-                  </td>
-                  <td className="px-5 py-3.5 text-[var(--muted)]">{companyOrCreator}</td>
+                  <td className="px-5 py-3.5 text-[var(--muted)]">{row.typeLabel}</td>
+                  <td className="px-5 py-3.5 text-[var(--muted)]">{row.companyOrCreator}</td>
                   <td className="px-5 py-3.5 text-[var(--ink)] whitespace-nowrap">{formatDateTime(s.scheduledAt)}</td>
                   <td className="px-5 py-3.5">
                     <ScheduledEmailActions
@@ -145,13 +163,13 @@ export default async function ScheduledPage() {
               </tr>
             )}
             {history.map((s) => {
-              const payload = s.payload as unknown as ComposePayload;
+              const row = describeRow(s.kind, s.payload);
               const style = STATUS_STYLE[s.status] ?? STATUS_STYLE.PENDING;
               return (
                 <tr key={s.id} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg)] transition-colors">
                   <td className="px-5 py-3.5">
-                    <div className="font-medium text-[var(--ink)]">{payload.contactName || "—"}</div>
-                    <div className="text-[var(--muted-2)] text-xs">{payload.contactEmail}</div>
+                    <div className="font-medium text-[var(--ink)]">{row.name}</div>
+                    <div className="text-[var(--muted-2)] text-xs">{row.email}</div>
                   </td>
                   <td className="px-5 py-3.5 text-[var(--muted)] whitespace-nowrap">{formatDateTime(s.scheduledAt)}</td>
                   <td className="px-5 py-3.5">

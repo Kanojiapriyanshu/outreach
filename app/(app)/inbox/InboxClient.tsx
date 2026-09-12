@@ -105,6 +105,11 @@ export default function InboxClient({
   // Kept at this level, not inside the list, so it survives opening a conversation — a compose
   // window that vanished when you clicked something else to reference would be useless.
   const [composing, setComposing] = useState(false);
+  // Gmail-style multi-select: a checkbox per row, plus a select-all in the toolbar. Cleared on any
+  // navigation (search, page, view change) since a selection tied to "row 3 of this specific list"
+  // stops meaning anything once the list underneath it changes.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkWorking, setBulkWorking] = useState(false);
 
   const rows = threads
     .map((t) => ({ ...t, ...optimistic[t.id] }))
@@ -126,6 +131,7 @@ export default function InboxClient({
         else params.set(k, v);
       }
       startTransition(() => router.push(`/inbox?${params.toString()}`, { scroll: false }));
+      setSelected(new Set());
     },
     [router, searchParams]
   );
@@ -166,6 +172,47 @@ export default function InboxClient({
     } finally {
       setRefreshing(false);
     }
+  }
+
+  /** Same idea as mutate(), but for a whole selection at once: one optimistic update covering
+   * every row, the PATCHes fired in parallel, one refresh at the end instead of one per row. */
+  async function bulkMutate(ids: string[], patch: Partial<InboxThreadRow>) {
+    if (ids.length === 0) return;
+    setBulkWorking(true);
+    setOptimistic((prev) => {
+      const next = { ...prev };
+      for (const id of ids) next[id] = { ...next[id], ...patch };
+      return next;
+    });
+    try {
+      await Promise.all(
+        ids.map((id) =>
+          fetch(`/api/inbox/threads/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(patch),
+          })
+        )
+      );
+      router.refresh();
+    } finally {
+      setBulkWorking(false);
+      setSelected(new Set());
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const allVisibleSelected = rows.length > 0 && rows.every((t) => selected.has(t.id));
+  function toggleSelectAll() {
+    setSelected(allVisibleSelected ? new Set() : new Set(rows.map((t) => t.id)));
   }
 
   const composeWindow = composing ? (
@@ -210,65 +257,109 @@ export default function InboxClient({
           <PenLine size={15} />
           <span className="hidden sm:inline">Compose</span>
         </button>
-        <div className="relative flex-1 max-w-xl">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-2)]" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") navigate({ q: search, page: null, thread: null });
-              if (e.key === "Escape") {
-                setSearch("");
-                navigate({ q: null, page: null });
-              }
-            }}
-            placeholder="Search mail"
-            className="w-full pl-9 pr-9 py-2 text-sm rounded-lg border border-transparent bg-[var(--bg)] focus:bg-[var(--surface)] focus:border-[var(--border)] outline-none transition-colors text-[var(--ink)]"
-          />
-          {search && (
+
+        <input
+          type="checkbox"
+          checked={allVisibleSelected}
+          onChange={toggleSelectAll}
+          disabled={rows.length === 0}
+          aria-label={allVisibleSelected ? "Deselect all" : "Select all"}
+          title={allVisibleSelected ? "Deselect all" : "Select all"}
+          className="shrink-0 w-4 h-4 accent-current"
+          style={{ color: "var(--brand-teal-dark)" }}
+        />
+
+        {selected.size > 0 ? (
+          <div className="flex items-center gap-0.5 flex-1 min-w-0">
+            <span className="text-xs font-medium text-[var(--muted)] mr-1.5 shrink-0">{selected.size} selected</span>
+            <RowAction label="Mark as read" onClick={() => bulkMutate([...selected], { isUnread: false })} disabled={bulkWorking}>
+              <MailOpen size={15} />
+            </RowAction>
+            <RowAction label="Mark as unread" onClick={() => bulkMutate([...selected], { isUnread: true })} disabled={bulkWorking}>
+              <Mail size={15} />
+            </RowAction>
+            {view !== "trash" ? (
+              <RowAction label="Archive" onClick={() => bulkMutate([...selected], { isArchived: true })} disabled={bulkWorking}>
+                <Archive size={15} />
+              </RowAction>
+            ) : (
+              <RowAction label="Restore" onClick={() => bulkMutate([...selected], { isTrashed: false })} disabled={bulkWorking}>
+                <ArchiveRestore size={15} />
+              </RowAction>
+            )}
+            <RowAction label={view === "trash" ? "Delete forever" : "Delete"} onClick={() => bulkMutate([...selected], { isTrashed: true })} disabled={bulkWorking}>
+              <Trash2 size={15} />
+            </RowAction>
             <button
-              onClick={() => {
-                setSearch("");
-                navigate({ q: null, page: null });
-              }}
-              aria-label="Clear search"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-2)] hover:text-[var(--ink)]"
+              onClick={() => setSelected(new Set())}
+              className="ml-1 text-xs font-medium text-[var(--muted-2)] hover:text-[var(--ink)] shrink-0"
             >
-              <X size={15} />
+              Clear
             </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          <>
+            <div className="relative flex-1 max-w-xl">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-2)]" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") navigate({ q: search, page: null, thread: null });
+                  if (e.key === "Escape") {
+                    setSearch("");
+                    navigate({ q: null, page: null });
+                  }
+                }}
+                placeholder="Search mail"
+                className="w-full pl-9 pr-9 py-2 text-sm rounded-lg border border-transparent bg-[var(--bg)] focus:bg-[var(--surface)] focus:border-[var(--border)] outline-none transition-colors text-[var(--ink)]"
+              />
+              {search && (
+                <button
+                  onClick={() => {
+                    setSearch("");
+                    navigate({ q: null, page: null });
+                  }}
+                  aria-label="Clear search"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-2)] hover:text-[var(--ink)]"
+                >
+                  <X size={15} />
+                </button>
+              )}
+            </div>
 
-        <button
-          onClick={syncNow}
-          disabled={refreshing}
-          title="Check for new mail now"
-          className="p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)] transition-colors disabled:opacity-50"
-        >
-          <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
-        </button>
+            <button
+              onClick={syncNow}
+              disabled={refreshing}
+              title="Check for new mail now"
+              className="p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)] transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
+            </button>
 
-        <div className="hidden sm:flex items-center gap-1.5 text-xs text-[var(--muted-2)] whitespace-nowrap">
-          <span>
-            {from}–{to} of {total}
-          </span>
-          <button
-            onClick={() => navigate({ page: String(page - 1) })}
-            disabled={page <= 1}
-            aria-label="Newer"
-            className="p-1 rounded hover:bg-[var(--bg)] disabled:opacity-30 disabled:hover:bg-transparent"
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <button
-            onClick={() => navigate({ page: String(page + 1) })}
-            disabled={to >= total}
-            aria-label="Older"
-            className="p-1 rounded hover:bg-[var(--bg)] disabled:opacity-30 disabled:hover:bg-transparent"
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-[var(--muted-2)] whitespace-nowrap">
+              <span>
+                {from}–{to} of {total}
+              </span>
+              <button
+                onClick={() => navigate({ page: String(page - 1) })}
+                disabled={page <= 1}
+                aria-label="Newer"
+                className="p-1 rounded hover:bg-[var(--bg)] disabled:opacity-30 disabled:hover:bg-transparent"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <button
+                onClick={() => navigate({ page: String(page + 1) })}
+                disabled={to >= total}
+                aria-label="Older"
+                className="p-1 rounded hover:bg-[var(--bg)] disabled:opacity-30 disabled:hover:bg-transparent"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* View tabs */}
@@ -343,9 +434,18 @@ export default function InboxClient({
               navigate({ thread: t.id });
             }}
             className={`group flex items-center gap-2 md:gap-3 px-3 md:px-5 h-[52px] md:h-[44px] border-b border-[var(--border)] cursor-pointer transition-colors ${
-              t.isUnread ? "bg-[var(--surface)]" : "bg-[var(--bg)]"
+              selected.has(t.id) ? "bg-[var(--brand-teal-light)]" : t.isUnread ? "bg-[var(--surface)]" : "bg-[var(--bg)]"
             } hover:bg-[var(--brand-teal-light)]`}
           >
+            <input
+              type="checkbox"
+              checked={selected.has(t.id)}
+              onClick={(e) => e.stopPropagation()}
+              onChange={() => toggleSelect(t.id)}
+              aria-label={selected.has(t.id) ? "Deselect" : "Select"}
+              className="shrink-0 w-4 h-4 accent-current"
+              style={{ color: "var(--brand-teal-dark)" }}
+            />
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -421,16 +521,27 @@ export default function InboxClient({
   );
 }
 
-function RowAction({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+function RowAction({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <button
       title={label}
       aria-label={label}
+      disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
         onClick();
       }}
-      className="p-1.5 rounded text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]"
+      className="p-1.5 rounded text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)] disabled:opacity-40"
     >
       {children}
     </button>

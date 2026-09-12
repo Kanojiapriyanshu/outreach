@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { renderTemplate, variablesForType } from "@/lib/templates";
-import { gmailClientFor, sendInitialEmail } from "@/lib/gmail";
+import { gmailClientFor, sendInitialEmail, sendRichEmail, htmlToPlainText, type OutgoingAttachment } from "@/lib/gmail";
 import { isUnderDailyLimit } from "@/lib/quota";
 import { computeNextScheduledAt } from "@/lib/scheduler";
 import { addCalendarDays, clampToSendingWindow } from "@/lib/businessDays";
@@ -276,6 +276,14 @@ export async function trackSequence(input: TrackEmailInput): Promise<TrackEmailR
 export interface ComposeEmailInput extends ContactInput {
   templateOverrideSubject?: string;
   templateOverrideBody?: string;
+  /** Set when this came from the inbox's rich-text Compose window rather than the guided New
+   * Outreach form — sent via sendRichEmail (preserving formatting/attachments/Cc/Bcc) instead of
+   * the plain-text-only sendInitialEmail the guided flow's templates use. templateOverrideBody
+   * still gets a plain-text copy for the EmailMessage activity record either way. */
+  html?: string;
+  cc?: string;
+  bcc?: string;
+  attachments?: OutgoingAttachment[];
 }
 
 export type ComposeEmailResult =
@@ -336,12 +344,14 @@ export async function composeAndSendInitialEmail(input: ComposeEmailInput): Prom
   // (see deriveVariables) — a template override the team typed by hand is sent exactly as
   // written, curly braces and all, if that's what they put there. Nothing here blocks a send.
   const subject = input.templateOverrideSubject ?? renderTemplate(template.subject, variables);
-  const body = input.templateOverrideBody ?? renderTemplate(template.body, variables);
+  const body = input.html ? htmlToPlainText(input.html) : (input.templateOverrideBody ?? renderTemplate(template.body, variables));
 
   const gmail = await gmailClientFor(input.emailAccountId);
   let sent;
   try {
-    sent = await sendInitialEmail(gmail, { to: input.contactEmail, subject, body, fromEmail: emailAccount.email });
+    sent = input.html
+      ? await sendRichEmail(gmail, { to: input.contactEmail, cc: input.cc, bcc: input.bcc, subject, html: input.html, attachments: input.attachments })
+      : await sendInitialEmail(gmail, { to: input.contactEmail, subject, body, fromEmail: emailAccount.email });
   } catch (e) {
     return { ok: false, error: e instanceof Error ? `Gmail send failed: ${e.message}` : "Gmail send failed" };
   }
@@ -405,9 +415,37 @@ export async function scheduleInitialEmail(
   if (prereqError) return { ok: false, error: prereqError };
 
   const scheduled = await prisma.scheduledInitialEmail.create({
-    data: { scheduledAt, status: "PENDING", payload: input as object },
+    data: { scheduledAt, status: "PENDING", kind: "SEQUENCE", payload: input as object },
   });
 
+  return { ok: true, scheduledId: scheduled.id, scheduledAt };
+}
+
+/** A brand-new email the outbound classifier read as neither brand nor creator outreach (or that
+ * the person composing it overrode to "just an email") — no Brand/Creator/Contact rows, no
+ * sequence, no follow-ups. Still goes through the same due-scan/claim/worker machinery as a
+ * SEQUENCE row so Gmail-style schedule send works identically either way; see
+ * ScheduledInitialEmailKind for how the two are told apart when a row comes due. */
+export interface PlainEmailInput {
+  emailAccountId: string;
+  to: string;
+  cc?: string;
+  bcc?: string;
+  subject: string;
+  html: string;
+  attachments?: OutgoingAttachment[];
+}
+
+export type SchedulePlainEmailResult = { ok: true; scheduledId: string; scheduledAt: Date } | { ok: false; error: string };
+
+export async function schedulePlainEmail(input: PlainEmailInput, scheduledAt: Date): Promise<SchedulePlainEmailResult> {
+  const recipients = input.to.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const suppressed = await prisma.suppressedContact.findFirst({ where: { email: { in: recipients } } });
+  if (suppressed) return { ok: false, error: `${suppressed.email} has opted out and can't be emailed.` };
+
+  const scheduled = await prisma.scheduledInitialEmail.create({
+    data: { scheduledAt, status: "PENDING", kind: "PLAIN", payload: input as object },
+  });
   return { ok: true, scheduledId: scheduled.id, scheduledAt };
 }
 
@@ -440,6 +478,10 @@ export async function processScheduledInitialEmail(scheduledId: string) {
 async function sendClaimedInitialEmail(scheduledId: string) {
   const scheduled = await prisma.scheduledInitialEmail.findUnique({ where: { id: scheduledId } });
   if (!scheduled || scheduled.status !== "PENDING") return { skipped: true };
+
+  if (scheduled.kind === "PLAIN") {
+    return sendClaimedPlainEmail(scheduled.id, scheduled.payload as unknown as PlainEmailInput);
+  }
 
   const payload = scheduled.payload as unknown as ComposeEmailInput;
 
@@ -476,4 +518,43 @@ async function sendClaimedInitialEmail(scheduledId: string) {
     data: { status: "FAILED", error: result.error },
   });
   return { sent: false, error: result.error };
+}
+
+/** The PLAIN-kind counterpart to sendClaimedInitialEmail — same quota self-heal, but sends via
+ * sendRichEmail directly with no Contact/Brand/Creator/sequence involved. */
+async function sendClaimedPlainEmail(scheduledId: string, payload: PlainEmailInput) {
+  const emailAccount = await prisma.emailAccount.findUnique({ where: { id: payload.emailAccountId } });
+  if (!emailAccount || emailAccount.accessStatus !== "CONNECTED") {
+    await prisma.scheduledInitialEmail.update({
+      where: { id: scheduledId },
+      data: { status: "FAILED", error: "Email account is no longer connected" },
+    });
+    return { sent: false, error: "Email account is no longer connected" };
+  }
+
+  const underLimit = await isUnderDailyLimit(emailAccount.id, emailAccount.dailySendLimit);
+  if (!underLimit) {
+    const settings = await prisma.automationSettings.findFirstOrThrow();
+    const tomorrow = clampToSendingWindow(addCalendarDays(new Date(), 1), settings);
+    await prisma.scheduledInitialEmail.update({ where: { id: scheduledId }, data: { scheduledAt: tomorrow } });
+    return { skipped: true, reason: `Daily send limit reached for ${emailAccount.email}; rescheduled to ${formatDateTime(tomorrow)}` };
+  }
+
+  try {
+    const gmail = await gmailClientFor(emailAccount.id);
+    await sendRichEmail(gmail, {
+      to: payload.to,
+      cc: payload.cc,
+      bcc: payload.bcc,
+      subject: payload.subject,
+      html: payload.html,
+      attachments: payload.attachments,
+    });
+    await prisma.scheduledInitialEmail.update({ where: { id: scheduledId }, data: { status: "SENT", sentAt: new Date() } });
+    return { sent: true };
+  } catch (e) {
+    const message = e instanceof Error ? `Gmail send failed: ${e.message}` : "Gmail send failed";
+    await prisma.scheduledInitialEmail.update({ where: { id: scheduledId }, data: { status: "FAILED", error: message } });
+    return { sent: false, error: message };
+  }
 }
