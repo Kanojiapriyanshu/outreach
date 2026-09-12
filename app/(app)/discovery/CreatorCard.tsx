@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { ExternalLink, Mail, MailX, RefreshCw, Sparkles, Users, Eye, TrendingUp, Clock, Radio } from "lucide-react";
+import { ExternalLink, Mail, MailX, RefreshCw, Users, Eye, TrendingUp, Clock, Radio } from "lucide-react";
 import StartOutreachButton from "./StartOutreachButton";
 import CreatorDetailModal from "./CreatorDetailModal";
+import MediaKitButton from "./MediaKitButton";
 
 export interface CreatorCardData {
   creatorId?: string;
@@ -163,20 +163,16 @@ export default function CreatorCard({ creator }: { creator: CreatorCardData }) {
         >
           <ExternalLink size={15} />
         </a>
-        {current.existingInsightReportId ? (
-          <Link
-            href={`/insights/report?reportId=${current.existingInsightReportId}`}
-            title="View Insight OS report"
-            className="p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)]"
-          >
-            <Sparkles size={15} />
-          </Link>
-        ) : null}
+        <MediaKitButton
+          channelUrl={current.channelUrl}
+          existingReportId={current.existingInsightReportId}
+          onReportCreated={(reportId) => setCurrent((prev) => ({ ...prev, existingInsightReportId: reportId }))}
+        />
         {current.creatorId && (
           <>
             <button
               onClick={() => setShowDetail(true)}
-              title="View full media &amp; social presence"
+              title="Edit contact details &amp; social links"
               className="ml-auto p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)]"
             >
               <Radio size={14} />
