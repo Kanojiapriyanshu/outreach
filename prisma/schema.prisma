@@ -320,6 +320,7 @@ model Creator {
   // --- Creator Discovery fields — all optional, so a Creator entered by hand through the
   // original New Outreach flow (which only ever sets the fields above) is unaffected. ---
   /**
+   * /**
    * /** YouTube's own channel id (UC...). The dedupe/upsert key across repeat searches — this is
    * what lets the Library grow into a real cache instead of re-discovering the same channel under
    * a new row every time someone searches again.
@@ -345,6 +346,18 @@ model Creator {
    * facebook?, amazonStorefront?: string }. Never live-searched — see lib/youtube/channelExtractor.ts.
    */
   platformLinks    Json      @default("{}")
+  /**
+   * Same data as platformLinks, flattened to just the keys present (e.g. ["instagram","tiktok"])
+   * — a String[] column so the Library filter can do `hasSome: [...]` instead of a fragile
+   * JSON-path query. platformLinks stays the source of truth for the actual URLs; this exists
+   * purely to make "has Instagram OR TikTok" a fast, simple filter.
+   */
+  platformTags     String[]  @default([])
+  /**
+   * The channel's full About description, saved so the "media" detail view can show it (and let
+   * the team re-read it) without an extra API call every time someone opens a saved creator.
+   */
+  description      String?   @db.Text
   /**
    * "search" for a Discovery result, null/"manual" for one entered by hand.
    */

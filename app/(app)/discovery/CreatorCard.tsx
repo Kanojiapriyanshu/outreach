@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ExternalLink, Mail, MailX, RefreshCw, Sparkles, Users, Eye, TrendingUp, Clock } from "lucide-react";
+import { ExternalLink, Mail, MailX, RefreshCw, Sparkles, Users, Eye, TrendingUp, Clock, Radio } from "lucide-react";
 import StartOutreachButton from "./StartOutreachButton";
+import CreatorDetailModal from "./CreatorDetailModal";
 
 export interface CreatorCardData {
   creatorId?: string;
@@ -57,6 +58,7 @@ function daysAgo(iso: string | null): string | null {
 export default function CreatorCard({ creator }: { creator: CreatorCardData }) {
   const [refreshing, setRefreshing] = useState(false);
   const [current, setCurrent] = useState(creator);
+  const [showDetail, setShowDetail] = useState(false);
 
   async function refresh() {
     if (!current.creatorId) return;
@@ -171,16 +173,33 @@ export default function CreatorCard({ creator }: { creator: CreatorCardData }) {
           </Link>
         ) : null}
         {current.creatorId && (
-          <button
-            onClick={refresh}
-            disabled={refreshing}
-            title="Refresh live stats"
-            className="ml-auto p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)] disabled:opacity-50"
-          >
-            <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
-          </button>
+          <>
+            <button
+              onClick={() => setShowDetail(true)}
+              title="View full media &amp; social presence"
+              className="ml-auto p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)]"
+            >
+              <Radio size={14} />
+            </button>
+            <button
+              onClick={refresh}
+              disabled={refreshing}
+              title="Refresh live stats"
+              className="p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)] disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
+            </button>
+          </>
         )}
       </div>
+
+      {showDetail && current.creatorId && (
+        <CreatorDetailModal
+          creatorId={current.creatorId}
+          onClose={() => setShowDetail(false)}
+          onSaved={(patch) => setCurrent((prev) => ({ ...prev, email: patch.email, platformLinks: patch.platformLinks }))}
+        />
+      )}
     </div>
   );
 }

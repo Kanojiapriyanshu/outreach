@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Compass } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/app/generated/prisma/client";
-import { getUnitsUsedToday } from "@/lib/youtube/discoveryEngine";
+import { getUnitsUsedToday, PLATFORM_KEYS } from "@/lib/youtube/discoveryEngine";
 import SearchTab from "./SearchTab";
 import LibraryFilters from "./LibraryFilters";
 import CreatorCard, { type CreatorCardData } from "./CreatorCard";
@@ -13,20 +13,22 @@ export const dynamic = "force-dynamic";
 type Tab = "search" | "library";
 const PAGE_SIZE = 24;
 
-export default async function DiscoveryPage({
-  searchParams,
-}: {
-  searchParams: Promise<{
-    tab?: string;
-    q?: string;
-    country?: string;
-    minSubscribers?: string;
-    maxSubscribers?: string;
-    page?: string;
-  }>;
-}) {
-  const { tab: rawTab, q, country, minSubscribers, maxSubscribers, page: rawPage } = await searchParams;
-  const tab: Tab = rawTab === "library" ? "library" : "search";
+interface LibrarySearchParams {
+  tab?: string;
+  q?: string;
+  country?: string;
+  minSubscribers?: string;
+  maxSubscribers?: string;
+  minAverageViews?: string;
+  maxAverageViews?: string;
+  minEngagementRate?: string;
+  platforms?: string;
+  page?: string;
+}
+
+export default async function DiscoveryPage({ searchParams }: { searchParams: Promise<LibrarySearchParams> }) {
+  const params = await searchParams;
+  const tab: Tab = params.tab === "library" ? "library" : "search";
   const unitsUsedToday = await getUnitsUsedToday();
 
   return (
@@ -37,8 +39,9 @@ export default async function DiscoveryPage({
             <Compass size={22} /> Creator Discovery
           </h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
-            Search YouTube by niche, country, and audience size — business email and platform links are pulled
-            straight from each channel automatically, so there&apos;s nothing left to hunt for by hand.
+            Search YouTube by niche, country, audience size, and platform presence — business email and social
+            links are pulled straight from each channel automatically, so there&apos;s nothing left to hunt for by
+            hand.
           </p>
         </div>
         <div className="text-xs text-[var(--muted-2)] whitespace-nowrap">{unitsUsedToday.toLocaleString()} API units used today</div>
@@ -49,11 +52,7 @@ export default async function DiscoveryPage({
         <TabLink tab="library" active={tab === "library"} label="Library" />
       </div>
 
-      {tab === "search" ? (
-        <SearchTab />
-      ) : (
-        <LibraryTab q={q} country={country} minSubscribers={minSubscribers} maxSubscribers={maxSubscribers} page={rawPage} />
-      )}
+      {tab === "search" ? <SearchTab /> : <LibraryTab params={params} />}
     </div>
   );
 }
@@ -71,20 +70,10 @@ function TabLink({ tab, active, label }: { tab: Tab; active: boolean; label: str
   );
 }
 
-async function LibraryTab({
-  q,
-  country,
-  minSubscribers,
-  maxSubscribers,
-  page: rawPage,
-}: {
-  q?: string;
-  country?: string;
-  minSubscribers?: string;
-  maxSubscribers?: string;
-  page?: string;
-}) {
-  const page = Math.max(1, Number(rawPage) || 1);
+async function LibraryTab({ params }: { params: LibrarySearchParams }) {
+  const { q, country, minSubscribers, maxSubscribers, minAverageViews, maxAverageViews, minEngagementRate, platforms: platformsRaw } = params;
+  const page = Math.max(1, Number(params.page) || 1);
+  const platforms = (platformsRaw ?? "").split(",").filter((p): p is (typeof PLATFORM_KEYS)[number] => (PLATFORM_KEYS as readonly string[]).includes(p));
 
   // channelId is only ever set by Discovery's own search — this is what keeps the Library scoped
   // to creators actually found here, rather than every hand-entered Creator from New Outreach too.
@@ -95,13 +84,15 @@ async function LibraryTab({
       : {}),
     ...(country?.trim() ? { country: country.trim().toUpperCase() } : {}),
     ...(minSubscribers || maxSubscribers
-      ? {
-          subscriberCount: {
-            ...(minSubscribers ? { gte: Number(minSubscribers) } : {}),
-            ...(maxSubscribers ? { lte: Number(maxSubscribers) } : {}),
-          },
-        }
+      ? { subscriberCount: { ...(minSubscribers ? { gte: Number(minSubscribers) } : {}), ...(maxSubscribers ? { lte: Number(maxSubscribers) } : {}) } }
       : {}),
+    ...(minAverageViews || maxAverageViews
+      ? { averageViews: { ...(minAverageViews ? { gte: Number(minAverageViews) } : {}), ...(maxAverageViews ? { lte: Number(maxAverageViews) } : {}) } }
+      : {}),
+    ...(minEngagementRate ? { engagementRate: { gte: Number(minEngagementRate) } } : {}),
+    // "has any of the selected platforms" — hasSome on the flattened platformTags array, kept in
+    // sync with platformLinks by discoveryEngine.ts on every save.
+    ...(platforms.length > 0 ? { platformTags: { hasSome: platforms } } : {}),
   };
 
   const [totalCount, creators] = await Promise.all([
@@ -133,6 +124,8 @@ async function LibraryTab({
     niche: c.niche ?? "",
   }));
 
+  const hasFilters = !!(q || country || minSubscribers || maxSubscribers || minAverageViews || maxAverageViews || minEngagementRate || platforms.length);
+
   return (
     <div className="space-y-5">
       <Suspense fallback={<div className="h-10" />}>
@@ -141,9 +134,7 @@ async function LibraryTab({
 
       {cards.length === 0 ? (
         <div className="card p-10 text-center text-sm text-[var(--muted-2)]">
-          {q || country || minSubscribers || maxSubscribers
-            ? "Nothing in the Library matches those filters."
-            : "Nothing discovered yet — run a search and it'll show up here automatically."}
+          {hasFilters ? "Nothing in the Library matches those filters." : "Nothing discovered yet — run a search and it'll show up here automatically."}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -153,40 +144,23 @@ async function LibraryTab({
         </div>
       )}
 
-      <LibraryPagination page={page} pageSize={PAGE_SIZE} totalCount={totalCount} q={q} country={country} minSubscribers={minSubscribers} maxSubscribers={maxSubscribers} />
+      <LibraryPagination page={page} pageSize={PAGE_SIZE} totalCount={totalCount} params={params} />
     </div>
   );
 }
 
-function LibraryPagination({
-  page,
-  pageSize,
-  totalCount,
-  q,
-  country,
-  minSubscribers,
-  maxSubscribers,
-}: {
-  page: number;
-  pageSize: number;
-  totalCount: number;
-  q?: string;
-  country?: string;
-  minSubscribers?: string;
-  maxSubscribers?: string;
-}) {
+function LibraryPagination({ page, pageSize, totalCount, params }: { page: number; pageSize: number; totalCount: number; params: LibrarySearchParams }) {
   if (totalCount === 0) return null;
   const start = (page - 1) * pageSize + 1;
   const end = Math.min(page * pageSize, totalCount);
-  const params = new URLSearchParams();
-  params.set("tab", "library");
-  if (q) params.set("q", q);
-  if (country) params.set("country", country);
-  if (minSubscribers) params.set("minSubscribers", minSubscribers);
-  if (maxSubscribers) params.set("maxSubscribers", maxSubscribers);
 
   const hrefFor = (p: number) => {
-    const next = new URLSearchParams(params);
+    const next = new URLSearchParams();
+    next.set("tab", "library");
+    for (const [key, value] of Object.entries(params)) {
+      if (key === "tab" || key === "page" || !value) continue;
+      next.set(key, value);
+    }
     next.set("page", String(p));
     return `/discovery?${next.toString()}`;
   };
