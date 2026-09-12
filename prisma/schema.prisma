@@ -308,15 +308,57 @@ model Brand {
 }
 
 model Creator {
-  id          String    @id @default(cuid())
+  id          String   @id @default(cuid())
   name        String
   email       String?
   channelName String?
   channelUrl  String?
   niche       String?
-  notes       String?   @db.Text
-  createdAt   DateTime  @default(now())
-  contacts    Contact[]
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  // --- Creator Discovery fields — all optional, so a Creator entered by hand through the
+  // original New Outreach flow (which only ever sets the fields above) is unaffected. ---
+  /**
+   * /** YouTube's own channel id (UC...). The dedupe/upsert key across repeat searches — this is
+   * what lets the Library grow into a real cache instead of re-discovering the same channel under
+   * a new row every time someone searches again.
+   */
+  channelId        String?   @unique
+  thumbnailUrl     String?
+  /**
+   * ISO 3166-1 alpha-2, from channels.list snippet.country.
+   */
+  country          String?
+  subscriberCount  Int?
+  /**
+   * From calculateCreatorAverage() over the channel's recent uploads.
+   */
+  averageViews     Int?
+  engagementRate   Float?
+  /**
+   * Most recent upload's publishedAt — powers the "posted in the last N days" freshness filter.
+   */
+  lastUploadAt     DateTime?
+  /**
+   * Auto-detected from the channel description: { instagram?, tiktok?, twitter?, pinterest?,
+   * facebook?, amazonStorefront?: string }. Never live-searched — see lib/youtube/channelExtractor.ts.
+   */
+  platformLinks    Json      @default("{}")
+  /**
+   * "search" for a Discovery result, null/"manual" for one entered by hand.
+   */
+  discoverySource  String?
+  /**
+   * Bumped every time a search re-surfaces this channel — a cache-freshness signal, separate
+   * from lastUploadAt (which is about the creator's own posting activity).
+   */
+  lastDiscoveredAt DateTime?
+
+  contacts Contact[]
+
+  @@index([subscriberCount])
+  @@index([lastDiscoveredAt])
 }
 
 model Contact {
@@ -630,4 +672,21 @@ model InsightReportShare {
   revokedAt DateTime?
 
   @@index([reportId])
+}
+
+/**
+ * A running daily total of YouTube Data API quota units spent, across all rotated keys combined.
+ * Key rotation itself (lib/youtube/api.ts) is purely reactive — it only finds out a key is out of
+ * quota when a call fails with 403/429. This is the one proactive signal: search.list costs 100
+ * units against 1 for a lookup call, so Discovery writes here after every search and the UI reads
+ * it back to show "~X units used today" and soft-warn well before quota actually runs out.
+ */
+model YoutubeApiUsage {
+  id        String   @id @default(cuid())
+  /**
+   * "YYYY-MM-DD" — one row per day.
+   */
+  date      String   @unique
+  units     Int      @default(0)
+  updatedAt DateTime @updatedAt
 }

@@ -1,5 +1,6 @@
 import "server-only";
 import { toNumber } from "./numbers";
+import { getBestThumbnail } from "./fields";
 
 /**
  * The YouTube Data API client.
@@ -152,6 +153,73 @@ export async function getChannelDetails(channelId: string): Promise<Record<strin
   const channel = data.items?.[0];
   if (!channel) throw new YouTubeApiError("Channel not found or unavailable.", 404);
   return channel;
+}
+
+/** Same batching trick as getVideosStats — one call for up to 50 channels instead of one call
+ * each, since channels.list accepts a comma-joined id list just like videos.list does. This is
+ * what makes Discovery's search results affordable: a page of 50 search hits costs 1 extra unit
+ * to fully resolve, not 50. */
+export async function getChannelsDetailsBatch(channelIds: string[]): Promise<Record<string, any>[]> {
+  const ids = [...new Set(channelIds.filter(Boolean))].slice(0, 50);
+  if (ids.length === 0) return [];
+
+  const data = await youtubeGet("channels", { part: PUBLIC_CHANNEL_PARTS, id: ids.join(",") });
+  return (data.items ?? []) as Record<string, any>[];
+}
+
+export interface SearchChannelsOptions {
+  /** 1-50, YouTube's own per-page cap. */
+  maxResults?: number;
+  /** ISO 3166-1 alpha-2 (e.g. "IN", "US"). Biases relevance toward that region — it does NOT
+   * hard-filter a channel's actual location, which only channels.list's snippet.country reports. */
+  regionCode?: string;
+  relevanceLanguage?: string;
+  order?: "relevance" | "viewCount" | "date";
+  pageToken?: string;
+}
+
+export interface SearchChannelHit {
+  channelId: string;
+  title: string;
+  thumbnailUrl: string;
+}
+
+/**
+ * search.list, type=channel — the one endpoint that finds channels by keyword rather than
+ * requiring an already-known ID. Costs 100 quota units per call regardless of maxResults, so
+ * callers should fetch one full page (up to 50) and filter it down rather than requesting a
+ * small page and re-searching to top it up — see lib/youtube/discoveryEngine.ts.
+ *
+ * Returns bare id/title/thumbnail only; a search hit's own snippet.description is truncated and
+ * unsuitable for email/platform-link extraction — resolve full channel details separately via
+ * getChannelsDetailsBatch for anything beyond "does this channel exist and what's it called."
+ */
+export async function searchChannels(
+  query: string,
+  opts: SearchChannelsOptions = {}
+): Promise<{ items: SearchChannelHit[]; nextPageToken?: string }> {
+  const data = await youtubeGet("search", {
+    part: "snippet",
+    q: query,
+    type: "channel",
+    maxResults: Math.min(Math.max(opts.maxResults ?? 25, 1), 50),
+    regionCode: opts.regionCode,
+    relevanceLanguage: opts.relevanceLanguage,
+    order: opts.order,
+    pageToken: opts.pageToken,
+  });
+
+  const items = ((data.items ?? []) as any[])
+    // A channel-type search hit carries its id at snippet.channelId, with id.channelId as a
+    // fallback — the same shape lib/youtube/resolveInput.ts already relies on.
+    .map((hit) => ({
+      channelId: hit.snippet?.channelId ?? hit.id?.channelId ?? "",
+      title: hit.snippet?.title ?? "",
+      thumbnailUrl: getBestThumbnail(hit.snippet?.thumbnails),
+    }))
+    .filter((hit) => hit.channelId);
+
+  return { items, nextPageToken: data.nextPageToken };
 }
 
 export interface PublicComment {

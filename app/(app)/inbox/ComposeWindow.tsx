@@ -16,31 +16,55 @@ function labelForPreview(c: ClassificationChoice): string {
   return "Just an email — no follow-up";
 }
 
-export default function ComposeWindow({ onClose, onSent }: { onClose: () => void; onSent: () => void }) {
+/** Lets a caller other than "start blank" open Compose already knowing who this is for — Creator
+ * Discovery's Start Outreach button is the first one to use this, but nothing about it is
+ * Discovery-specific. Skips the async classification guess entirely when `classification` is set:
+ * a caller that already knows for certain shouldn't get second-guessed by a heuristic. */
+export interface ComposePrefill {
+  to?: string;
+  contactName?: string;
+  companyName?: string;
+  classification?: ClassificationChoice;
+  channelName?: string;
+  channelUrl?: string;
+  niche?: string;
+  subject?: string;
+}
+
+export default function ComposeWindow({
+  onClose,
+  onSent,
+  initial,
+}: {
+  onClose: () => void;
+  onSent: () => void;
+  initial?: ComposePrefill;
+}) {
   const [minimized, setMinimized] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
   const [showCc, setShowCc] = useState(false);
   const [showBcc, setShowBcc] = useState(false);
 
-  const [to, setTo] = useState("");
+  const [to, setTo] = useState(initial?.to ?? "");
   const [cc, setCc] = useState("");
   const [bcc, setBcc] = useState("");
-  const [subject, setSubject] = useState("");
+  const [subject, setSubject] = useState(initial?.subject ?? "");
   const [html, setHtml] = useState("");
   // No clear() needed here: discarding closes the whole window, which unmounts this state.
   const { attachments, removeAt, totalBytes, AttachButton } = useAttachments();
 
   // --- Who this is actually for, and whether that means follow-ups (see lib/outboundClassifier.ts) ---
   const [autoGuess, setAutoGuess] = useState<OutboundGuess | null>(null);
-  const [classificationOverride, setClassificationOverride] = useState<ClassificationChoice | null>(null);
-  const [contactName, setContactName] = useState("");
-  const [companyName, setCompanyName] = useState("");
+  const [classificationOverride, setClassificationOverride] = useState<ClassificationChoice | null>(initial?.classification ?? null);
+  const [contactName, setContactName] = useState(initial?.contactName ?? "");
+  const [companyName, setCompanyName] = useState(initial?.companyName ?? "");
   const classification = effectiveClassification(autoGuess, classificationOverride);
 
   // Re-guesses on a short pause after the recipient/subject/body change — cheap (keyword scoring
   // plus one indexed lookup), so debouncing is just about not firing on every keystroke rather
-  // than about cost. Stops once the team has picked something by hand; their choice shouldn't
-  // flicker back to "auto" just because they kept typing the email.
+  // than about cost. Stops once the team has picked something by hand (including a classification
+  // this window was opened already knowing, per `initial` above) — their choice shouldn't flicker
+  // back to "auto" just because they kept typing the email.
   useEffect(() => {
     if (!to.trim() || classificationOverride) return;
     const timeout = setTimeout(() => {
@@ -97,7 +121,10 @@ export default function ComposeWindow({ onClose, onSent }: { onClose: () => void
         contactEmail: to.trim(),
         contactName: contactName.trim(),
         brand: classification.outreachType === "BRAND" ? { name: companyName.trim() } : undefined,
-        creator: classification.outreachType === "CREATOR" ? { name: contactName.trim() } : undefined,
+        creator:
+          classification.outreachType === "CREATOR"
+            ? { name: contactName.trim(), channelName: initial?.channelName, channelUrl: initial?.channelUrl, niche: initial?.niche }
+            : undefined,
         variables: {},
         html,
         cc: cc.trim() || undefined,
