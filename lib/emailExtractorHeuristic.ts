@@ -56,7 +56,8 @@ const DELIVERABLE_KEYWORDS = [
   "Sponsored Post",
 ];
 
-const SIGNOFF_LINE = /^(regards|best regards|thanks(?: & regards)?|sincerely|thank you)[,.]?\s*$/i;
+const SIGNOFF_LINE =
+  /^(regards|best(?: regards)?|thanks(?: & regards)?|sincerely|thank you|talk soon|cheers|warmly|kind regards|many thanks|looking forward)[,.]?\s*$/i;
 const COMPANY_SUFFIX_HINT = /\b(team|media|agency|group|inc|llc|studio|partners)\b/i;
 
 /** Trims whitespace and stray full-width/decorative punctuation left over from regex captures. */
@@ -98,7 +99,7 @@ function parseSignature(text: string): { personName?: string; company?: string }
 function extractContactName(text: string): string | undefined {
   const fromSignature = parseSignature(text).personName;
   if (fromSignature) return fromSignature;
-  const introMatch = text.match(/\bmy name is ([A-Z][a-zA-Z'-]{1,20})/i);
+  const introMatch = text.match(/\b(?:my name is|i'?m|this is) ([A-Z][a-zA-Z'-]{1,20})\b/i);
   return introMatch?.[1];
 }
 
@@ -125,6 +126,9 @@ function extractOnBehalfOf(text: string): string | undefined {
     /partner(?:ing|ed)? with ([A-Z][A-Za-z0-9&'’\- ]{1,30}?)[,.\n ]/i,
     /collaborat(?:e|ing) with ([A-Z][A-Za-z0-9&'’\- ]{1,30}?)[,.\n ]/i,
     /\brepresenting ([A-Z][A-Za-z0-9&'’\- ]{1,30}?)[,.\n]/i,
+    // "a campaign for one of our clients, X" / "our client X" — an agency naming the brand it's
+    // actually pitching, as opposed to its own name (which comes from the signature instead).
+    /\b(?:one of )?our clients?,?\s+([A-Z][A-Za-z0-9&'’\- ]{1,30}?)[,.\n]/i,
   ];
   for (let i = 0; i < patterns.length; i++) {
     const captured = text.match(patterns[i])?.[1]?.trim();
@@ -138,10 +142,22 @@ function extractOnBehalfOf(text: string): string | undefined {
   return undefined;
 }
 
-/** "My name is X from Y" / "This is X from Y" — Y is usually the sender's own company. */
+/**
+ * The sender's own company, from patterns other than a signature block: "from Y" ("I'm Sarah from
+ * Y"), "founder/CEO/owner of Y" ("founder of GlowLab"), or a role tacked onto "at Y" ("Talent
+ * Partnerships Manager at BrightWave Media"). Tried in this order since "from" is the most
+ * reliable — "at" alone is common in unrelated phrases ("looking at", "great at"), so it's scoped
+ * to directly following a capitalized noun phrase, which those don't have.
+ */
 function extractFromCompany(text: string): string | undefined {
-  const match = text.match(/\bfrom ([A-Z][A-Za-z0-9&.,'’\- ]{1,40}?)[,.\n]/);
-  return match ? cleanCompanyName(match[1]) : undefined;
+  const fromMatch = text.match(/\bfrom ([A-Z][A-Za-z0-9&.,'’\- ]{1,40}?)[,.\n]/);
+  if (fromMatch) return cleanCompanyName(fromMatch[1]);
+
+  const roleMatch = text.match(/\b(?:founder|co-founder|ceo|owner|head|manager) (?:of|at) ([A-Z][A-Za-z0-9&'’\- ]{1,40}?)[,.\n]/i);
+  if (roleMatch) return cleanCompanyName(roleMatch[1]);
+
+  const atMatch = text.match(/\b(?:manager|director|lead|specialist|coordinator|representative) at ([A-Z][A-Za-z0-9&'’\- ]{1,40}?)[,.\n]/i);
+  return atMatch ? cleanCompanyName(atMatch[1]) : undefined;
 }
 
 function extractEmail(text: string): string | undefined {
@@ -152,6 +168,19 @@ function extractEmail(text: string): string | undefined {
 function findCategoryMatch(text: string): CategoryInfo | undefined {
   const lower = text.toLowerCase();
   return CATEGORY_MAP.find((c) => lower.includes(c.keyword.toLowerCase()));
+}
+
+/**
+ * A last-resort raw category when the product isn't one of CATEGORY_MAP's curated keywords —
+ * that list can only ever cover the categories someone thought to add, so a category-only field
+ * ({Niche_Categories}/{Target_Audience_Or_Angle} still need the curated phrasing to sound natural
+ * and are left blank here) shouldn't come back empty just because this is the first email about,
+ * say, a smart-home hub or a project management tool. Looks for "launching their new X" /
+ * "our new X" — the phrasing a pitch almost always uses to name the actual product.
+ */
+function extractCategoryFallback(text: string): string | undefined {
+  const match = text.match(/\b(?:launching|introducing|announcing)\s+(?:their|our|its)?\s*new\s+([a-z][a-z0-9 &-]{2,30}?)[.,!\n]/i);
+  return match ? cleanValue(match[1]) : undefined;
 }
 
 /**
@@ -172,39 +201,64 @@ function extractDeliverables(text: string): string | undefined {
   return found.length > 0 ? found.join(", ") : undefined;
 }
 
+function toSubscriberCount(num: string, unit: string): number {
+  const n = parseFloat(num);
+  return unit.toLowerCase() === "m" ? n * 1_000_000 : n * 1_000;
+}
+
+/**
+ * "50K-500K subscribers" / "50K to 500K followers" — the range form is tried first since the
+ * plain single-number scan below only requires a keyword immediately after the LAST number, so
+ * on a range it would only ever see "500K" and silently drop the "50K" lower bound.
+ */
 function extractInfluencerRange(text: string): { min?: number; max?: number } {
+  const rangeMatch = text.match(
+    /(\d+(?:\.\d+)?)\s*([kKmM])\+?\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)\s*([kKmM])\+?\s*(?=subscribers|followers|audience|views|$|\s|,|\.)/i
+  );
+  if (rangeMatch) {
+    const [, num1, unit1, num2, unit2] = rangeMatch;
+    return { min: toSubscriberCount(num1, unit1), max: toSubscriberCount(num2, unit2) };
+  }
+
   const tokens = [...text.matchAll(/(\d+(?:\.\d+)?)\s*([kKmM])\+?\s*(?=subscribers|followers|audience|views|$|\s|,|\.)/g)];
-  const values = tokens.map(([, num, unit]) => {
-    const n = parseFloat(num);
-    return unit.toLowerCase() === "m" ? n * 1_000_000 : n * 1_000;
-  });
+  const values = tokens.map(([, num, unit]) => toSubscriberCount(num, unit));
   if (values.length === 0) return {};
   return { min: Math.min(...values), max: Math.max(...values) };
 }
 
 function extractBudget(text: string): { text?: string; type?: ExtractedBrandDetails["budgetType"] } {
-  const commission = text.match(/(\d{1,2}(?:\.\d+)?)\s*%\s*(?:pure\s*)?commission/i);
+  // "affiliate", "rev share", etc. between the % and "commission" used to fall through to the
+  // dollar match below (or nothing at all), since the old pattern required "commission" right
+  // after the number with only "pure" allowed in between.
+  const commission = text.match(/(\d{1,2}(?:\.\d+)?)\s*%\s*(?:\w+\s+)?commission/i);
+  const dollarRange = text.match(/\$[\d,]+(?:\.\d+)?(?:\s*[-–—to]+\s*\$?[\d,]+(?:\.\d+)?)?/);
+  const productOnly = /free samples?|product only|no cash|complimentary product/i.test(text);
+
+  // "either $500 or 15% commission, your choice" — a real offer, not a typo — so it's recorded as
+  // both figures rather than only the one whichever regex happened to match first.
+  if (commission && dollarRange && /\b(?:either|your choice|whichever)\b/i.test(text)) {
+    return { text: `${dollarRange[0]} or ${commission[1]}% commission`, type: "HYBRID" };
+  }
+
   if (commission) {
-    const productOnly = /free samples?|product only|no cash|complimentary product/i.test(text);
     return {
       text: `${commission[1]}% commission${productOnly ? ", product only" : ""}`,
       type: productOnly ? "HYBRID" : "COMMISSION",
     };
   }
 
-  const dollarRange = text.match(/\$[\d,]+(?:\.\d+)?(?:\s*[-–—to]+\s*\$?[\d,]+(?:\.\d+)?)?/);
   if (dollarRange) return { text: dollarRange[0], type: "FLAT_FEE" };
 
-  if (/free samples?|product exchange|gifted|complimentary product/i.test(text)) {
-    return { text: "Product only", type: "PRODUCT_ONLY" };
-  }
+  if (productOnly) return { text: "Product only", type: "PRODUCT_ONLY" };
 
   return {};
 }
 
 const MONTH = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\\.?";
 function extractCampaignTimeline(text: string): string | undefined {
-  const re = new RegExp(`${MONTH}\\.?\\s*\\d{1,2}\\s*[-–—]\\s*(?:${MONTH}\\.?\\s*)?\\d{1,2}`, "i");
+  // "-"/"to" for "Oct 5-20", "and" for "between Oct 5 and Oct 20" — both show up about equally
+  // often in the wild.
+  const re = new RegExp(`${MONTH}\\.?\\s*\\d{1,2}\\s*(?:[-–—]|\\s+(?:to|and)\\s+)\\s*(?:${MONTH}\\.?\\s*)?\\d{1,2}`, "i");
   const match = text.match(re);
   return match?.[0].replace(/\s+/g, " ").trim();
 }
@@ -279,7 +333,7 @@ export function extractBrandDetailsHeuristic(rawEmailText: string, opts: { isOut
       brandOrAgencyName: greetedName,
       campaignOrProductName: greetedName,
       isAgency: false,
-      category: categoryMatch?.category,
+      category: categoryMatch?.category ?? extractCategoryFallback(text),
       nicheCategories: categoryMatch?.niche,
       keyProductFeatures: extractKeyProductFeatures(text),
       targetAudienceOrAngle: extractTargetAudienceOrAngle(text, categoryMatch),
@@ -306,13 +360,15 @@ export function extractBrandDetailsHeuristic(rawEmailText: string, opts: { isOut
   const brandOrAgencyName = isAgency ? signerName ?? onBehalfOf : onBehalfOf ?? signerName;
 
   const categoryMatch = findCategoryMatch(text);
+  const categoryFallback = categoryMatch ? undefined : extractCategoryFallback(text);
 
   // What actually goes in the email as {Brand_Or_Campaign_Name} — the CLIENT brand's name, never
   // the agency's own name. When an agency doesn't name their client (common — they often only
   // describe the product), fall back to the product category itself ("AR Glasses") rather than
   // reusing the agency's identity, which would read as nonsense ("leading the Meridian Media campaign").
   const campaignOrProductName = isAgency
-    ? (onBehalfOf && !selfReferential ? onBehalfOf : undefined) ?? (categoryMatch ? titleCase(categoryMatch.category) : undefined)
+    ? (onBehalfOf && !selfReferential ? onBehalfOf : undefined) ??
+      (categoryMatch ? titleCase(categoryMatch.category) : categoryFallback ? titleCase(categoryFallback) : undefined)
     : onBehalfOf ?? signerName;
 
   const { min, max } = extractInfluencerRange(text);
@@ -324,7 +380,7 @@ export function extractBrandDetailsHeuristic(rawEmailText: string, opts: { isOut
     isAgency,
     contactName: extractContactName(text),
     contactEmail: extractEmail(text),
-    category: categoryMatch?.category,
+    category: categoryMatch?.category ?? categoryFallback,
     nicheCategories: categoryMatch?.niche,
     keyProductFeatures: extractKeyProductFeatures(text),
     targetAudienceOrAngle: extractTargetAudienceOrAngle(text, categoryMatch),

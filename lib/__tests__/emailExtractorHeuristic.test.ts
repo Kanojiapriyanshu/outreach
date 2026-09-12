@@ -141,4 +141,36 @@ describe("extractBrandDetailsHeuristic — real sample emails, no API key", () =
     expect(result.contactEmail).toBe("hello@example.com");
     expect(result.budgetType).toBe("FLAT_FEE");
   });
+
+  it("keeps the lower bound of a subscriber range instead of collapsing it to the upper one", () => {
+    // Previously the number-matching regex only accepted a keyword (subscribers/etc.) or
+    // whitespace directly after the unit, so "50K-500K" (no space before the dash) silently lost
+    // the "50K" and reported min === max === 500000.
+    const result = extractBrandDetailsHeuristic("We're looking for creators in the 50K-500K subscriber range.");
+    expect(result.influencerRangeMin).toBe(50_000);
+    expect(result.influencerRangeMax).toBe(500_000);
+  });
+
+  it("records an either/or commission offer as HYBRID with both figures, not just whichever regex matched first", () => {
+    const result = extractBrandDetailsHeuristic("Comp: either a flat $500 or 15% affiliate commission, your choice.");
+    expect(result.budgetType).toBe("HYBRID");
+    expect(result.budgetRangeText).toMatch(/\$500/);
+    expect(result.budgetRangeText).toMatch(/15%/);
+  });
+
+  it("picks up the sender's name and company from an intro sentence, not only a signature block", () => {
+    const result = extractBrandDetailsHeuristic(
+      "Hi there, I'm Sarah and I'm a Talent Partnerships Manager at BrightWave Media, a creator marketing agency. " +
+        "We're running a campaign for one of our clients, Nuvo Home, launching their new smart home hub."
+    );
+    expect(result.contactName).toBe("Sarah");
+    expect(result.brandOrAgencyName).toBe("BrightWave Media");
+    expect(result.campaignOrProductName).toBe("Nuvo Home");
+    expect(result.category).toBe("smart home hub");
+  });
+
+  it("reads a timeline joined with 'and' as well as a dash", () => {
+    const result = extractBrandDetailsHeuristic("The campaign would need to go live between October 5 and October 20.");
+    expect(result.campaignTimeline).toMatch(/October 5.*October 20/);
+  });
 });
