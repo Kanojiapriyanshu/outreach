@@ -110,6 +110,10 @@ export interface NormalizedChannel {
   country: string;
   thumbnails: Record<string, { url?: string }>;
   thumbnailUrl: string;
+  /** The channel's own cover/banner image (brandingSettings.image.bannerExternalUrl) — the one
+   * piece of the creator's own visual branding the public API actually exposes, confirmed present
+   * for every real channel checked while building the media kit hero. Empty string if unset. */
+  bannerUrl: string;
   subscriberCount: number;
   subscriberCountDisplay: string;
   hiddenSubscriberCount: boolean;
@@ -153,6 +157,7 @@ export function normalizeChannel(channel: Record<string, any>): NormalizedChanne
     country: snippet.country ?? brandingSettings.channel?.country ?? "",
     thumbnails: snippet.thumbnails ?? {},
     thumbnailUrl: getBestThumbnail(snippet.thumbnails),
+    bannerUrl: brandingSettings.image?.bannerExternalUrl ?? "",
     subscriberCount,
     subscriberCountDisplay: compactNumber(subscriberCount),
     hiddenSubscriberCount: Boolean(statistics.hiddenSubscriberCount),

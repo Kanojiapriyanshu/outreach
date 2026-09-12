@@ -166,7 +166,6 @@ export default function CreatorCard({ creator }: { creator: CreatorCardData }) {
         </a>
         <MediaKitButton
           creatorId={current.creatorId}
-          existingMediaKitId={current.existingMediaKitId}
           onMediaKitCreated={(mediaKitId) => setCurrent((prev) => ({ ...prev, existingMediaKitId: mediaKitId }))}
         />
         {current.creatorId && (

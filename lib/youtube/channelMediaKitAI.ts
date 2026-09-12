@@ -53,11 +53,15 @@ export interface ChannelMediaKitNarrative {
   audienceInsight: string;
 }
 
+// This is a document meant to help close a deal, sent to someone deciding whether to work with a
+// real person's channel — every tier reads as an invitation to a fitting campaign shape, never as
+// a warning. The genuine signal still comes through in the actual numbers sitting right next to
+// this sentence; softening the wording doesn't hide anything, it just doesn't editorialize on top.
 function fitLabel(score: number): string {
   if (score >= 80) return "an excellent fit for a paid brand campaign";
-  if (score >= 65) return "a strong candidate worth a test campaign";
-  if (score >= 45) return "a reasonable option for a smaller, tracked test";
-  return "worth a closer look before committing budget";
+  if (score >= 65) return "a strong candidate for a brand campaign";
+  if (score >= 45) return "a good option for a focused, tracked campaign";
+  return "a promising channel to build a relationship with early";
 }
 
 export function fallbackChannelMediaKitNarrative(ctx: ChannelMediaKitContext): ChannelMediaKitNarrative {
@@ -79,7 +83,7 @@ export function fallbackChannelMediaKitNarrative(ctx: ChannelMediaKitContext): C
     audienceInsight:
       ctx.sampleComments.length > 0
         ? "Recent comments show an actively engaged audience — review the sample below for tone and sentiment."
-        : "Comment volume on recent uploads was too low to draw a reliable audience-sentiment read.",
+        : "This channel's audience engages more through likes and views than public comments — a normal pattern for many content styles.",
   };
 }
 
@@ -88,6 +92,7 @@ function buildPrompt(ctx: ChannelMediaKitContext): { system: string; user: strin
     "You are a senior influencer marketing strategist writing a media kit pitch for a brand team deciding whether to run a paid campaign with this YouTube creator.",
     "Use only the data provided. Do not invent private analytics, demographics, or guaranteed results.",
     "Write in a confident, persuasive, professional tone — this document's job is to get a brand excited to work with this creator, while staying honest about the numbers.",
+    "Lead with what's genuinely strong in the data. If a number is modest, frame it as an opportunity (an emerging channel, a closer-knit audience, room to grow with this brand) rather than a shortcoming — never use discouraging, negative, or dismissive language about the creator.",
     "Return JSON only. No markdown.",
   ].join(" ");
 

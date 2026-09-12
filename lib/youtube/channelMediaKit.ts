@@ -27,11 +27,28 @@ export interface VideoSummary {
   durationDisplay: string;
 }
 
+/** {label, percent} — a percentage breakdown for one audience-demographic category. Matches the
+ * exact shape the creator's own YouTube Studio shows them, so transcribing a screenshot into
+ * CreatorDetailModal's editor is a direct copy, not a translation. */
+export interface DemographicSlice {
+  label: string;
+  percent: number;
+}
+
+export interface SponsorshipEstimate {
+  low: number;
+  mid: number;
+  high: number;
+  /** What the estimate is actually for, since "per what" changes the number by 10x. */
+  basis: string;
+}
+
 export interface ChannelMediaKitData {
   channelId: string;
   channelTitle: string;
   channelUrl: string;
   thumbnailUrl: string;
+  bannerUrl: string;
   country: string;
   niche: string;
   subscriberCount: number;
@@ -48,6 +65,13 @@ export interface ChannelMediaKitData {
   platformLinks: ExtractedPlatformLinks;
   sampleComments: string[];
   narrative: ChannelMediaKitNarrative;
+  sponsorshipEstimate: SponsorshipEstimate;
+  /** Only ever real numbers a human entered from the creator's own analytics — never inferred,
+   * estimated, or guessed. Empty arrays when nothing has been shared yet, in which case the report
+   * simply omits this section rather than showing a placeholder or a fabricated guess. */
+  audienceCountries: DemographicSlice[];
+  audienceAgeRanges: DemographicSlice[];
+  audienceGenderSplit: DemographicSlice[];
 }
 
 /** How many days apart uploads land on average, turned into a plain-language cadence a brand can
@@ -107,6 +131,31 @@ function computeConsistency(videos: NormalizedVideo[]): number {
   return Math.max(0, Math.min(1, 1 - cv / 2));
 }
 
+/**
+ * A rough sponsorship-value range from average views, using the same CPM (cost per 1,000 views)
+ * benchmarking every influencer-marketing rate card is built on. Explicitly an estimate with a
+ * disclosed method, never presented as a quote — actual rates depend on niche, deliverable, and
+ * negotiation, which this has no way to know.
+ */
+function estimateSponsorshipValue(averageViews: number): SponsorshipEstimate {
+  const CPM_LOW = 8;
+  const CPM_MID = 15;
+  const CPM_HIGH = 25;
+  return {
+    low: Math.round((averageViews / 1000) * CPM_LOW),
+    mid: Math.round((averageViews / 1000) * CPM_MID),
+    high: Math.round((averageViews / 1000) * CPM_HIGH),
+    basis: "one dedicated video, estimated from average views at standard industry CPM rates",
+  };
+}
+
+function toDemographicSlices(raw: unknown): DemographicSlice[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => ({ label: String((item as Record<string, unknown>)?.label ?? "").trim(), percent: Number((item as Record<string, unknown>)?.percent) }))
+    .filter((s) => s.label && Number.isFinite(s.percent) && s.percent > 0);
+}
+
 function toVideoSummary(v: NormalizedVideo): VideoSummary {
   return {
     videoId: v.videoId,
@@ -132,7 +181,14 @@ export async function generateChannelMediaKit(channelId: string, niche?: string)
   // above (which are already normalized flat shapes with no `.statistics`/`.snippet` for it to
   // read, so passing the normalized array here silently zeroed every metric).
   const average = calculateCreatorAverage(rawVideos, "");
-  const viewToSubscriberRate = channel.subscriberCount > 0 ? (average.averageViews / channel.subscriberCount) * 100 : 0;
+
+  // A real channel with videos always has *some* average — if the sampled-upload calculation
+  // still comes back empty (comments/stats temporarily unavailable, an unusual upload mix), fall
+  // back to the channel's own lifetime total divided by its video count rather than showing "0"
+  // for a metric that demonstrably isn't zero.
+  const averageViews = average.averageViews > 0 || channel.videoCount === 0 ? average.averageViews : channel.totalViewCount / channel.videoCount;
+
+  const viewToSubscriberRate = channel.subscriberCount > 0 ? (averageViews / channel.subscriberCount) * 100 : 0;
 
   const publishDates = videos.map((v) => v.publishedAt).filter((d): d is Date => d !== null);
   const uploadFrequencyLabel = describeUploadFrequency(publishDates);
@@ -180,12 +236,21 @@ export async function generateChannelMediaKit(channelId: string, niche?: string)
     }
   }
 
+  // Real audience demographics, if the team has already transcribed them from this creator's own
+  // YouTube Studio analytics onto their Creator record — never inferred here, see DemographicSlice.
+  const creatorRecord = await prisma.creator.findUnique({ where: { channelId: channel.channelId } });
+  const audienceCountries = toDemographicSlices(creatorRecord?.audienceCountries);
+  const audienceAgeRanges = toDemographicSlices(creatorRecord?.audienceAgeRanges);
+  const audienceGenderSplit = toDemographicSlices(creatorRecord?.audienceGenderSplit);
+
+  const sponsorshipEstimate = estimateSponsorshipValue(averageViews);
+
   const context: ChannelMediaKitContext = {
     channelTitle: channel.title,
     niche: niche || topCategories[0] || "",
     country: channel.country,
     subscriberCount: channel.subscriberCount,
-    averageViews: average.averageViews,
+    averageViews,
     engagementRate: average.averageEngagementRate,
     viewToSubscriberRate,
     uploadFrequencyLabel,
@@ -203,12 +268,13 @@ export async function generateChannelMediaKit(channelId: string, niche?: string)
     channelTitle: channel.title,
     channelUrl: channel.channelUrl,
     thumbnailUrl: channel.thumbnailUrl,
+    bannerUrl: channel.bannerUrl,
     country: channel.country,
     niche: context.niche,
     subscriberCount: channel.subscriberCount,
     totalViewCount: channel.totalViewCount,
     videoCount: channel.videoCount,
-    averageViews: Math.round(average.averageViews),
+    averageViews: Math.round(averageViews),
     engagementRate: average.averageEngagementRate,
     viewToSubscriberRate,
     brandFitScore,
@@ -219,6 +285,10 @@ export async function generateChannelMediaKit(channelId: string, niche?: string)
     platformLinks,
     sampleComments,
     narrative,
+    sponsorshipEstimate,
+    audienceCountries,
+    audienceAgeRanges,
+    audienceGenderSplit,
   };
 
   const saved = await prisma.channelMediaKit.create({
@@ -232,7 +302,7 @@ export async function generateChannelMediaKit(channelId: string, niche?: string)
       subscriberCount: channel.subscriberCount,
       totalViewCount: BigInt(Math.round(channel.totalViewCount)),
       videoCount: channel.videoCount,
-      averageViews: Math.round(average.averageViews),
+      averageViews: Math.round(averageViews),
       engagementRate: average.averageEngagementRate,
       viewToSubscriberRate,
       brandFitScore,

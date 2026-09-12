@@ -9,7 +9,9 @@ export const dynamic = "force-dynamic";
  * public link, plus a bar to actually get that link. */
 export default async function MediaKitPreviewPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const mediaKit = await prisma.channelMediaKit.findUnique({ where: { id } });
+  // Only `data` — the lifted columns (including a BigInt one that RSC serialization can't carry
+  // across the server/client boundary) are for querying/filtering, not for this page's own use.
+  const mediaKit = await prisma.channelMediaKit.findUnique({ where: { id }, select: { data: true } });
   if (!mediaKit) notFound();
 
   return (

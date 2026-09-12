@@ -323,6 +323,7 @@ model Creator {
    * /**
    * /**
    * /**
+   * /**
    * /** YouTube's own channel id (UC...). The dedupe/upsert key across repeat searches — this is
    * what lets the Library grow into a real cache instead of re-discovering the same channel under
    * a new row every time someone searches again.
@@ -369,6 +370,18 @@ model Creator {
    * from lastUploadAt (which is about the creator's own posting activity).
    */
   lastDiscoveredAt DateTime?
+
+  /**
+   * Real audience demographics, entered by hand from the creator's own YouTube Studio analytics
+   * when they share it with the team — the public API has no legitimate way to see a channel's
+   * actual viewer age/gender/location breakdown for anyone but the channel owner, so this is
+   * deliberately never inferred or estimated. Each is an array of {label, percent}; the media kit
+   * only shows this section when populated, never a placeholder or a guess. See
+   * lib/youtube/channelMediaKit.ts and CreatorDetailModal.tsx.
+   */
+  audienceCountries   Json @default("[]")
+  audienceAgeRanges   Json @default("[]")
+  audienceGenderSplit Json @default("[]")
 
   contacts Contact[]
 

@@ -357,15 +357,33 @@ export async function refreshCreator(creatorId: string): Promise<RefreshCreatorR
   return { ok: true };
 }
 
+export interface DemographicSliceInput {
+  label: string;
+  percent: number;
+}
+
 export interface CreatorEditInput {
   email?: string | null;
   notes?: string | null;
   platformLinks?: ExtractedPlatformLinks;
+  /** Real numbers transcribed from the creator's own YouTube Studio analytics — see the schema
+   * comment on Creator.audienceCountries for why these are never inferred. `undefined` leaves the
+   * existing value alone; an array (including empty) replaces it outright. */
+  audienceCountries?: DemographicSliceInput[];
+  audienceAgeRanges?: DemographicSliceInput[];
+  audienceGenderSplit?: DemographicSliceInput[];
+}
+
+function sanitizeSlices(slices: DemographicSliceInput[] | undefined): DemographicSliceInput[] | undefined {
+  if (!slices) return undefined;
+  return slices
+    .map((s) => ({ label: String(s.label ?? "").trim(), percent: Number(s.percent) }))
+    .filter((s) => s.label && Number.isFinite(s.percent) && s.percent > 0 && s.percent <= 100);
 }
 
 /** Manual edits from the creator detail view — filling in an email or platform link extraction
- * missed, or leaving notes. Never touches the fields a re-search/refresh keeps live (subscriber
- * count, engagement, etc.). */
+ * missed, real audience demographics the creator shared directly, or leaving notes. Never touches
+ * the fields a re-search/refresh keeps live (subscriber count, engagement, etc.). */
 export async function updateCreatorDetails(creatorId: string, input: CreatorEditInput): Promise<RefreshCreatorResult> {
   const creator = await prisma.creator.findUnique({ where: { id: creatorId } });
   if (!creator) return { ok: false, error: "Not found" };
@@ -380,6 +398,10 @@ export async function updateCreatorDetails(creatorId: string, input: CreatorEdit
     }
   }
 
+  const audienceCountries = sanitizeSlices(input.audienceCountries);
+  const audienceAgeRanges = sanitizeSlices(input.audienceAgeRanges);
+  const audienceGenderSplit = sanitizeSlices(input.audienceGenderSplit);
+
   await prisma.creator.update({
     where: { id: creatorId },
     data: {
@@ -388,6 +410,9 @@ export async function updateCreatorDetails(creatorId: string, input: CreatorEdit
       ...(mergedPlatformLinks
         ? { platformLinks: mergedPlatformLinks as object, platformTags: Object.keys(mergedPlatformLinks) }
         : {}),
+      ...(audienceCountries !== undefined ? { audienceCountries: audienceCountries as object } : {}),
+      ...(audienceAgeRanges !== undefined ? { audienceAgeRanges: audienceAgeRanges as object } : {}),
+      ...(audienceGenderSplit !== undefined ? { audienceGenderSplit: audienceGenderSplit as object } : {}),
     },
   });
 

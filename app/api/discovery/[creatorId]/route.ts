@@ -15,11 +15,15 @@ interface PatchBody {
   email?: string | null;
   notes?: string | null;
   platformLinks?: Record<string, string>;
+  audienceCountries?: { label: string; percent: number }[];
+  audienceAgeRanges?: { label: string; percent: number }[];
+  audienceGenderSplit?: { label: string; percent: number }[];
 }
 
-/** Manual edits from the creator detail view — an email or platform link extraction missed, or a
- * note for the team. See lib/youtube/discoveryEngine.ts's updateCreatorDetails for exactly what
- * this does and doesn't overwrite. */
+/** Manual edits from the creator detail view — an email or platform link extraction missed, real
+ * audience demographics transcribed from the creator's own analytics, or a note for the team. See
+ * lib/youtube/discoveryEngine.ts's updateCreatorDetails for exactly what this does and doesn't
+ * overwrite. */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ creatorId: string }> }) {
   const { creatorId } = await params;
   const body: PatchBody = await req.json();

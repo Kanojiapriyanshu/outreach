@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Loader2, Save } from "lucide-react";
+import { X, Loader2, Save, Plus, Trash2 } from "lucide-react";
 
 const PLATFORM_FIELDS: { key: string; label: string; placeholder: string }[] = [
   { key: "instagram", label: "Instagram", placeholder: "https://instagram.com/handle" },
@@ -11,6 +11,13 @@ const PLATFORM_FIELDS: { key: string; label: string; placeholder: string }[] = [
   { key: "facebook", label: "Facebook", placeholder: "https://facebook.com/handle" },
   { key: "amazonStorefront", label: "Amazon storefront", placeholder: "https://amazon.com/shop/handle" },
 ];
+
+interface Slice {
+  label: string;
+  percent: string;
+}
+
+const EMPTY_SLICE: Slice = { label: "", percent: "" };
 
 interface CreatorDetail {
   id: string;
@@ -23,13 +30,87 @@ interface CreatorDetail {
   platformLinks: Record<string, string>;
   subscriberCount: number | null;
   country: string | null;
+  audienceCountries: { label: string; percent: number }[];
+  audienceAgeRanges: { label: string; percent: number }[];
+  audienceGenderSplit: { label: string; percent: number }[];
+}
+
+function toSliceRows(raw: { label: string; percent: number }[] | undefined): Slice[] {
+  const rows = (raw ?? []).map((s) => ({ label: s.label, percent: String(s.percent) }));
+  return rows.length > 0 ? rows : [{ ...EMPTY_SLICE }];
+}
+
+function toApiSlices(rows: Slice[]): { label: string; percent: number }[] {
+  return rows
+    .map((r) => ({ label: r.label.trim(), percent: Number(r.percent) }))
+    .filter((r) => r.label && Number.isFinite(r.percent) && r.percent > 0);
+}
+
+/** A repeatable label+percent row editor, used identically for countries/age/gender — matches the
+ * exact shape YouTube Studio itself shows a creator, so transcribing their own analytics screenshot
+ * is direct copying, not translation. */
+function SliceListEditor({
+  title,
+  labelPlaceholder,
+  rows,
+  onChange,
+}: {
+  title: string;
+  labelPlaceholder: string;
+  rows: Slice[];
+  onChange: (rows: Slice[]) => void;
+}) {
+  function update(i: number, patch: Partial<Slice>) {
+    onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  }
+  function remove(i: number) {
+    const next = rows.filter((_, idx) => idx !== i);
+    onChange(next.length > 0 ? next : [{ ...EMPTY_SLICE }]);
+  }
+  function add() {
+    onChange([...rows, { ...EMPTY_SLICE }]);
+  }
+
+  return (
+    <div>
+      <label className="block text-xs font-medium text-[var(--muted-2)] uppercase tracking-wide mb-1.5">{title}</label>
+      <div className="space-y-1.5">
+        {rows.map((r, i) => (
+          <div key={i} className="flex items-center gap-1.5">
+            <input
+              className="input py-1.5 text-xs flex-1"
+              placeholder={labelPlaceholder}
+              value={r.label}
+              onChange={(e) => update(i, { label: e.target.value })}
+            />
+            <input
+              type="number"
+              className="input py-1.5 text-xs w-20"
+              placeholder="%"
+              value={r.percent}
+              onChange={(e) => update(i, { percent: e.target.value })}
+            />
+            <button type="button" onClick={() => remove(i)} className="p-1.5 text-[var(--muted-2)] hover:text-[var(--danger-fg)]" title="Remove">
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button type="button" onClick={add} className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-[var(--brand-teal-dark)]">
+        <Plus size={12} /> Add
+      </button>
+    </div>
+  );
 }
 
 /**
  * The full "media" view for one saved creator — everything Discovery knows about them in one
- * place, not scattered across a compact card's badges. This is also where a platform link
- * extraction missed (or an email that needs correcting) gets filled in by hand, since regex
- * extraction is a strong first pass, not a guarantee.
+ * place, not scattered across a compact card's badges. Also where a platform link extraction
+ * missed (or an email that needs correcting) gets filled in by hand, and where real audience
+ * demographics go once the creator has shared their own YouTube Studio analytics — this app has
+ * no legitimate way to see a channel's actual audience age/gender/location for anyone but the
+ * channel owner, so these three fields are never inferred, only ever transcribed from what the
+ * creator actually shared.
  */
 export default function CreatorDetailModal({
   creatorId,
@@ -45,6 +126,9 @@ export default function CreatorDetailModal({
   const [email, setEmail] = useState("");
   const [notes, setNotes] = useState("");
   const [platformLinks, setPlatformLinks] = useState<Record<string, string>>({});
+  const [countries, setCountries] = useState<Slice[]>([{ ...EMPTY_SLICE }]);
+  const [ageRanges, setAgeRanges] = useState<Slice[]>([{ ...EMPTY_SLICE }]);
+  const [genderSplit, setGenderSplit] = useState<Slice[]>([{ ...EMPTY_SLICE }]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +145,9 @@ export default function CreatorDetailModal({
         setEmail(data.creator.email ?? "");
         setNotes(data.creator.notes ?? "");
         setPlatformLinks(data.creator.platformLinks ?? {});
+        setCountries(toSliceRows(data.creator.audienceCountries));
+        setAgeRanges(toSliceRows(data.creator.audienceAgeRanges));
+        setGenderSplit(toSliceRows(data.creator.audienceGenderSplit));
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Couldn't load this creator");
       } finally {
@@ -80,7 +167,14 @@ export default function CreatorDetailModal({
       const res = await fetch(`/api/discovery/${creatorId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim() || null, notes: notes.trim() || null, platformLinks }),
+        body: JSON.stringify({
+          email: email.trim() || null,
+          notes: notes.trim() || null,
+          platformLinks,
+          audienceCountries: toApiSlices(countries),
+          audienceAgeRanges: toApiSlices(ageRanges),
+          audienceGenderSplit: toApiSlices(genderSplit),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Couldn't save");
@@ -155,6 +249,20 @@ export default function CreatorDetailModal({
               <p className="text-[11px] text-[var(--muted-2)] mt-1">
                 Auto-detected from their YouTube description where possible — add or fix any of these by hand.
               </p>
+            </div>
+
+            <div className="rounded-xl p-3 space-y-3" style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
+              <div>
+                <p className="text-xs font-semibold text-[var(--ink)]">Audience demographics</p>
+                <p className="text-[11px] text-[var(--muted-2)] mt-0.5">
+                  YouTube never makes a channel&apos;s real audience age, gender, or location public for anyone but the
+                  creator — this app will never guess these. If the creator shares their own YouTube Studio
+                  analytics with you, transcribe the numbers here and they&apos;ll appear on the media kit.
+                </p>
+              </div>
+              <SliceListEditor title="Top Locations" labelPlaceholder="e.g. United States" rows={countries} onChange={setCountries} />
+              <SliceListEditor title="Age Range" labelPlaceholder="e.g. 18-24" rows={ageRanges} onChange={setAgeRanges} />
+              <SliceListEditor title="Gender" labelPlaceholder="e.g. Male" rows={genderSplit} onChange={setGenderSplit} />
             </div>
 
             <div>

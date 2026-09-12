@@ -10,45 +10,43 @@ import { FileChartColumn, Loader2, Copy, Check, ExternalLink, X } from "lucide-r
  * Insight OS report (that answers "did this one upload do well"; a brand deciding whether to work
  * with this creator at all wants "how does the whole channel perform").
  *
- * One button covers both states: a creator with no media kit yet gets one generated fresh, a
- * creator that already has one just fetches its existing public link — either way, what shows up
- * after is the same "here's the link, send it" popover.
+ * Regenerates fresh on every click — never reuses an old row, even if one already exists for this
+ * channel, since numbers drift and a brand should never see stale performance data.
  */
 export default function MediaKitButton({
   creatorId,
-  existingMediaKitId,
   onMediaKitCreated,
 }: {
   creatorId?: string;
-  existingMediaKitId: string | null;
   onMediaKitCreated?: (mediaKitId: string) => void;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [mediaKitId, setMediaKitId] = useState<string | null>(existingMediaKitId);
+  const [mediaKitId, setMediaKitId] = useState<string | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  async function getOrCreateMediaKit() {
+  async function generateMediaKit() {
     if (!creatorId) return;
     setLoading(true);
     setError(null);
     try {
-      let id = mediaKitId;
-      if (!id) {
-        const res = await fetch("/api/media-kit/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ creatorId }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.error ?? "Couldn't generate the media kit");
-        id = data.mediaKitId;
-        if (!id) throw new Error("Media kit generated but didn't come back with an id");
-        setMediaKitId(id);
-        onMediaKitCreated?.(id);
-      }
+      // Always fresh, never reused — subscriber count and engagement drift, and a brand looking
+      // at "current performance" should never be shown numbers from whenever this happened to be
+      // generated last. Generation is cheap (a handful of API calls), unlike Discovery's own
+      // search — there's no real cost reason to cache this document.
+      const res = await fetch("/api/media-kit/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ creatorId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error ?? "Couldn't generate the media kit");
+      const id = data.mediaKitId;
+      if (!id) throw new Error("Media kit generated but didn't come back with an id");
+      setMediaKitId(id);
+      onMediaKitCreated?.(id);
 
       const shareRes = await fetch(`/api/media-kit/${id}/share`, { method: "POST" });
       const shareData = await shareRes.json();
@@ -76,9 +74,9 @@ export default function MediaKitButton({
   return (
     <div className="relative">
       <button
-        onClick={() => void getOrCreateMediaKit()}
+        onClick={() => void generateMediaKit()}
         disabled={loading || !creatorId}
-        title={mediaKitId ? "Get the public media kit link" : "Generate a whole-channel media kit for this creator"}
+        title="Generate a fresh whole-channel media kit for this creator"
         className="p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)] disabled:opacity-50"
       >
         {loading ? <Loader2 size={14} className="animate-spin" /> : <FileChartColumn size={14} />}
