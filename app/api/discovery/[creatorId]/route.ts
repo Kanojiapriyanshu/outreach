@@ -18,6 +18,7 @@ interface PatchBody {
   audienceCountries?: { label: string; percent: number }[];
   audienceAgeRanges?: { label: string; percent: number }[];
   audienceGenderSplit?: { label: string; percent: number }[];
+  audienceDevices?: { label: string; percent: number }[];
 }
 
 /** Manual edits from the creator detail view — an email or platform link extraction missed, real

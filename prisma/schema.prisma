@@ -382,6 +382,7 @@ model Creator {
   audienceCountries   Json @default("[]")
   audienceAgeRanges   Json @default("[]")
   audienceGenderSplit Json @default("[]")
+  audienceDevices     Json @default("[]")
 
   contacts Contact[]
 

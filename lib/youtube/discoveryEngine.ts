@@ -372,6 +372,7 @@ export interface CreatorEditInput {
   audienceCountries?: DemographicSliceInput[];
   audienceAgeRanges?: DemographicSliceInput[];
   audienceGenderSplit?: DemographicSliceInput[];
+  audienceDevices?: DemographicSliceInput[];
 }
 
 function sanitizeSlices(slices: DemographicSliceInput[] | undefined): DemographicSliceInput[] | undefined {
@@ -401,6 +402,7 @@ export async function updateCreatorDetails(creatorId: string, input: CreatorEdit
   const audienceCountries = sanitizeSlices(input.audienceCountries);
   const audienceAgeRanges = sanitizeSlices(input.audienceAgeRanges);
   const audienceGenderSplit = sanitizeSlices(input.audienceGenderSplit);
+  const audienceDevices = sanitizeSlices(input.audienceDevices);
 
   await prisma.creator.update({
     where: { id: creatorId },
@@ -413,6 +415,7 @@ export async function updateCreatorDetails(creatorId: string, input: CreatorEdit
       ...(audienceCountries !== undefined ? { audienceCountries: audienceCountries as object } : {}),
       ...(audienceAgeRanges !== undefined ? { audienceAgeRanges: audienceAgeRanges as object } : {}),
       ...(audienceGenderSplit !== undefined ? { audienceGenderSplit: audienceGenderSplit as object } : {}),
+      ...(audienceDevices !== undefined ? { audienceDevices: audienceDevices as object } : {}),
     },
   });
 

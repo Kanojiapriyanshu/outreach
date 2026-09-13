@@ -33,6 +33,7 @@ interface CreatorDetail {
   audienceCountries: { label: string; percent: number }[];
   audienceAgeRanges: { label: string; percent: number }[];
   audienceGenderSplit: { label: string; percent: number }[];
+  audienceDevices: { label: string; percent: number }[];
 }
 
 function toSliceRows(raw: { label: string; percent: number }[] | undefined): Slice[] {
@@ -129,6 +130,7 @@ export default function CreatorDetailModal({
   const [countries, setCountries] = useState<Slice[]>([{ ...EMPTY_SLICE }]);
   const [ageRanges, setAgeRanges] = useState<Slice[]>([{ ...EMPTY_SLICE }]);
   const [genderSplit, setGenderSplit] = useState<Slice[]>([{ ...EMPTY_SLICE }]);
+  const [devices, setDevices] = useState<Slice[]>([{ ...EMPTY_SLICE }]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -148,6 +150,7 @@ export default function CreatorDetailModal({
         setCountries(toSliceRows(data.creator.audienceCountries));
         setAgeRanges(toSliceRows(data.creator.audienceAgeRanges));
         setGenderSplit(toSliceRows(data.creator.audienceGenderSplit));
+        setDevices(toSliceRows(data.creator.audienceDevices));
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Couldn't load this creator");
       } finally {
@@ -174,6 +177,7 @@ export default function CreatorDetailModal({
           audienceCountries: toApiSlices(countries),
           audienceAgeRanges: toApiSlices(ageRanges),
           audienceGenderSplit: toApiSlices(genderSplit),
+          audienceDevices: toApiSlices(devices),
         }),
       });
       const data = await res.json();
@@ -263,6 +267,7 @@ export default function CreatorDetailModal({
               <SliceListEditor title="Top Locations" labelPlaceholder="e.g. United States" rows={countries} onChange={setCountries} />
               <SliceListEditor title="Age Range" labelPlaceholder="e.g. 18-24" rows={ageRanges} onChange={setAgeRanges} />
               <SliceListEditor title="Gender" labelPlaceholder="e.g. Male" rows={genderSplit} onChange={setGenderSplit} />
+              <SliceListEditor title="Devices" labelPlaceholder="e.g. Mobile" rows={devices} onChange={setDevices} />
             </div>
 
             <div>
