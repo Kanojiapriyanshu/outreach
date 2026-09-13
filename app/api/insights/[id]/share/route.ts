@@ -10,7 +10,7 @@ import { prisma } from "@/lib/prisma";
  * work. Re-requesting returns the existing live link instead of minting a second one, so a link
  * already sent out doesn't quietly stop being the canonical one.
  */
-export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
 
   const report = await prisma.insightReport.findUnique({ where: { id } });
@@ -27,7 +27,9 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
       data: { reportId: id, token: randomBytes(32).toString("base64url") },
     }));
 
-  const base = process.env.APP_BASE_URL?.replace(/\/$/, "") ?? "";
+  // Falls back to the domain this request actually arrived on when APP_BASE_URL isn't set on the
+  // deployment — see the identical fix on media-kit's share route for why.
+  const base = process.env.APP_BASE_URL?.replace(/\/$/, "") || req.nextUrl.origin;
   return NextResponse.json({
     success: true,
     data: { token: share.token, url: `${base}/insights/shared/${share.token}` },

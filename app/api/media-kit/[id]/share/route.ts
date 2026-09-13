@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 /** Creates (or returns) a no-login link to one channel media kit — mirrors
  * /api/insights/[id]/share/route.ts exactly; see that route's comment for why the token, not the
  * id, is the access control, and why re-requesting reuses the existing live link. */
-export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
 
   const mediaKit = await prisma.channelMediaKit.findUnique({ where: { id } });
@@ -22,7 +22,10 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
       data: { mediaKitId: id, token: randomBytes(32).toString("base64url") },
     }));
 
-  const base = process.env.APP_BASE_URL?.replace(/\/$/, "") ?? "";
+  // Falls back to the domain this request actually arrived on when APP_BASE_URL isn't set on the
+  // deployment — an unset env var used to silently produce a bare "/media-kit/shared/..." path
+  // with no scheme or host, which isn't a usable link once copied out of the browser bar.
+  const base = process.env.APP_BASE_URL?.replace(/\/$/, "") || req.nextUrl.origin;
   return NextResponse.json({ success: true, url: `${base}/media-kit/shared/${share.token}` });
 }
 
