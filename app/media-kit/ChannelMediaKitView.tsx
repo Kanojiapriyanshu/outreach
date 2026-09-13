@@ -441,58 +441,8 @@ export default function ChannelMediaKitView({ kit }: { kit: ChannelMediaKitData 
           </div>
         )}
 
-        {/* Performance */}
-        <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-5 sm:p-6">
-          <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">Performance</h3>
-          <p className="text-[12px] text-slate-500 mt-0.5 mb-3.5">Measured from this creator&apos;s public uploads.</p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
-            <StatCard icon={<Eye size={13} />} label="Avg Views" value={compactCount(kit.averageViews)} sub="Recent uploads" />
-            {performanceSummary && <StatCard icon={<BarChart3 size={13} />} label="Median Views" value={compactCount(performanceSummary.medianViews)} sub="Typical upload" />}
-            <StatCard icon={<TrendingUp size={13} />} label="Engagement Rate" value={`${kit.engagementRate.toFixed(2)}%`} sub="Likes + comments / views" />
-            <StatCard icon={<Zap size={13} />} label="View / Subscriber" value={`${kit.viewToSubscriberRate.toFixed(2)}%`} sub="Reach beyond subs" />
-            {performanceSummary && <StatCard icon={<ThumbsUp size={13} />} label="Avg Likes" value={compactCount(performanceSummary.averageLikes)} />}
-            {performanceSummary && <StatCard icon={<MessageCircle size={13} />} label="Avg Comments" value={compactCount(performanceSummary.averageComments)} />}
-            <StatCard icon={<Video size={13} />} label="Total Videos" value={compactCount(kit.videoCount)} />
-            {selectionSignals && <StatCard icon={<Calendar size={13} />} label="Uploads / 90d" value={String(selectionSignals.uploadsLast90Days)} sub="Monthly" />}
-          </div>
-          {performanceSummary && (performanceSummary.longFormPercent > 0 || performanceSummary.shortsPercent > 0) && (
-            <div className="mt-4">
-              <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">Content Format Mix</h4>
-              <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden flex">
-                <div className="h-full" style={{ width: `${performanceSummary.longFormPercent}%`, background: "#157a8c" }} />
-                <div className="h-full" style={{ width: `${performanceSummary.shortsPercent}%`, background: "#a3e0ea" }} />
-              </div>
-              <div className="flex items-center gap-4 mt-2 text-[11.5px] text-slate-500">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full" style={{ background: "#157a8c" }} /> Long-form {performanceSummary.longFormPercent}%
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full" style={{ background: "#a3e0ea" }} /> Shorts {performanceSummary.shortsPercent}%
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Creator Scorecard — six formula-derived sub-scores behind the headline Brand Fit Score */}
-        {scorecard && (
-          <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-5 sm:p-6">
-            <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-900 uppercase tracking-wide mb-1">
-              <Award size={15} style={{ color: "#157a8c" }} /> Creator Scorecard
-            </h3>
-            <p className="text-[12px] text-slate-500 mb-4">Computed from public YouTube performance signals.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3.5">
-              <ScorecardBar label="Engagement" score={scorecard.engagement} />
-              <ScorecardBar label="Consistency" score={scorecard.consistency} />
-              <ScorecardBar label="Authenticity" score={scorecard.authenticity} />
-              <ScorecardBar label="Brand Safety" score={scorecard.brandSafety} />
-              <ScorecardBar label="Niche Relevance" score={scorecard.nicheRelevance} />
-              <ScorecardBar label="Sponsorship Experience" score={scorecard.sponsorshipExperience} />
-            </div>
-          </div>
-        )}
-
-        {/* Strengths */}
+        {/* Strengths — grouped with "Why We Selected This Creator" above since both make the same
+            case (why to work with this creator), just narrative vs. checklist. */}
         {kit.narrative.strengths.length > 0 && (
           <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-5 sm:p-6">
             <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-3">Why {kit.channelTitle}</h3>
@@ -506,22 +456,6 @@ export default function ChannelMediaKitView({ kit }: { kit: ChannelMediaKitData 
             </div>
           </div>
         )}
-
-        {/* Estimated sponsorship value */}
-        <div className="rounded-2xl border p-5 sm:p-6" style={{ background: "#fffbeb", borderColor: "#fde68a" }}>
-          <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-900 uppercase tracking-wide mb-1">
-            <DollarSign size={15} style={{ color: "#d97706" }} /> Estimated Sponsorship Value
-          </h3>
-          <div className="flex items-baseline gap-2 flex-wrap mt-2">
-            <span className="text-2xl sm:text-3xl font-bold text-slate-900">
-              {compactMoney(kit.sponsorshipEstimate.low)} – {compactMoney(kit.sponsorshipEstimate.high)}
-            </span>
-            <span className="text-[12px] text-slate-500">for {kit.sponsorshipEstimate.basis}</span>
-          </div>
-          <p className="text-[11.5px] text-slate-500 mt-2">
-            Estimated using standard industry CPM benchmarks — actual rates vary by niche, deliverable, and negotiation.
-          </p>
-        </div>
 
         {/* Audience Profile. Gender/Age use real transcribed numbers whenever someone has entered
             them (badge: "Verified", plain percentages) and otherwise fall back to a category
@@ -621,6 +555,57 @@ export default function ChannelMediaKitView({ kit }: { kit: ChannelMediaKitData 
           );
         })()}
 
+        {/* Performance */}
+        <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-5 sm:p-6">
+          <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">Performance</h3>
+          <p className="text-[12px] text-slate-500 mt-0.5 mb-3.5">Measured from this creator&apos;s public uploads.</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
+            <StatCard icon={<Eye size={13} />} label="Avg Views" value={compactCount(kit.averageViews)} sub="Recent uploads" />
+            {performanceSummary && <StatCard icon={<BarChart3 size={13} />} label="Median Views" value={compactCount(performanceSummary.medianViews)} sub="Typical upload" />}
+            <StatCard icon={<TrendingUp size={13} />} label="Engagement" value={`${kit.engagementRate.toFixed(2)}%`} sub="Likes + comments / views" />
+            <StatCard icon={<Zap size={13} />} label="View/Sub" value={`${kit.viewToSubscriberRate.toFixed(2)}%`} sub="Reach beyond subs" />
+            {performanceSummary && <StatCard icon={<ThumbsUp size={13} />} label="Avg Likes" value={compactCount(performanceSummary.averageLikes)} />}
+            {performanceSummary && <StatCard icon={<MessageCircle size={13} />} label="Avg Comments" value={compactCount(performanceSummary.averageComments)} />}
+            <StatCard icon={<Video size={13} />} label="Total Videos" value={compactCount(kit.videoCount)} />
+            {selectionSignals && <StatCard icon={<Calendar size={13} />} label="Uploads / 90d" value={String(selectionSignals.uploadsLast90Days)} sub="Monthly" />}
+          </div>
+          {performanceSummary && (performanceSummary.longFormPercent > 0 || performanceSummary.shortsPercent > 0) && (
+            <div className="mt-4">
+              <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">Content Format Mix</h4>
+              <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden flex">
+                <div className="h-full" style={{ width: `${performanceSummary.longFormPercent}%`, background: "#157a8c" }} />
+                <div className="h-full" style={{ width: `${performanceSummary.shortsPercent}%`, background: "#a3e0ea" }} />
+              </div>
+              <div className="flex items-center gap-4 mt-2 text-[11.5px] text-slate-500">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full" style={{ background: "#157a8c" }} /> Long-form {performanceSummary.longFormPercent}%
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full" style={{ background: "#a3e0ea" }} /> Shorts {performanceSummary.shortsPercent}%
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Creator Scorecard — six formula-derived sub-scores behind the headline Brand Fit Score */}
+        {scorecard && (
+          <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-5 sm:p-6">
+            <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-900 uppercase tracking-wide mb-1">
+              <Award size={15} style={{ color: "#157a8c" }} /> Creator Scorecard
+            </h3>
+            <p className="text-[12px] text-slate-500 mb-4">Computed from public YouTube performance signals.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3.5">
+              <ScorecardBar label="Engagement" score={scorecard.engagement} />
+              <ScorecardBar label="Consistency" score={scorecard.consistency} />
+              <ScorecardBar label="Authenticity" score={scorecard.authenticity} />
+              <ScorecardBar label="Brand Safety" score={scorecard.brandSafety} />
+              <ScorecardBar label="Niche Relevance" score={scorecard.nicheRelevance} />
+              <ScorecardBar label="Sponsorship Experience" score={scorecard.sponsorshipExperience} />
+            </div>
+          </div>
+        )}
+
         {/* Top performing videos */}
         {kit.topVideos.length > 0 && (
           <div>
@@ -705,6 +690,24 @@ export default function ChannelMediaKitView({ kit }: { kit: ChannelMediaKitData 
             </div>
           </div>
         )}
+
+        {/* Estimated sponsorship value — placed with Full Transparency below since both make the
+            investment case, once the brand has already seen the audience/performance evidence
+            above. */}
+        <div className="rounded-2xl border p-5 sm:p-6" style={{ background: "#fffbeb", borderColor: "#fde68a" }}>
+          <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-900 uppercase tracking-wide mb-1">
+            <DollarSign size={15} style={{ color: "#d97706" }} /> Estimated Sponsorship Value
+          </h3>
+          <div className="flex items-baseline gap-2 flex-wrap mt-2">
+            <span className="text-2xl sm:text-3xl font-bold text-slate-900">
+              {compactMoney(kit.sponsorshipEstimate.low)} – {compactMoney(kit.sponsorshipEstimate.high)}
+            </span>
+            <span className="text-[12px] text-slate-500">for {kit.sponsorshipEstimate.basis}</span>
+          </div>
+          <p className="text-[11.5px] text-slate-500 mt-2">
+            Estimated using standard industry CPM benchmarks — actual rates vary by niche, deliverable, and negotiation.
+          </p>
+        </div>
 
         {/* Full transparency — every figure here is disclosed with its own formula, not stated as
             a verified analytics number, so a brand can see exactly how the projection was built. */}
