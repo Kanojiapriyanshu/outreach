@@ -5,6 +5,16 @@ import { extractChannelContact, type ExtractedPlatformLinks } from "./channelExt
 import { generateChannelMediaKitNarrative, type ChannelMediaKitContext, type ChannelMediaKitNarrative } from "./channelMediaKitAI";
 import { clamp } from "./numbers";
 import { estimateAudienceDemographics } from "./audienceEstimation";
+// Shared with Discovery so a creator's shortlist signals and their media kit can never disagree.
+import {
+  computeBrandSafety,
+  computeConsistency,
+  computeContentFormatMix,
+  computeSponsorshipFrequencyPercent,
+  computeUploadsInLastDays,
+  median,
+  sizeTierLabel,
+} from "./creatorSignals";
 
 /**
  * A whole-channel performance report — "should we work with this creator at all," aimed at a
@@ -198,19 +208,6 @@ function computeBrandFitScore(params: {
   return Math.round(Math.min(100, sizeScore + engagementScore + reachScore + consistencyScore + recencyScore));
 }
 
-/** Coefficient of variation of per-video engagement, inverted to a 0-1 "consistency" score — a
- * creator whose engagement swings wildly video to video is a riskier bet than one who performs
- * about the same every time, even at a similar average. */
-function computeConsistency(videos: NormalizedVideo[]): number {
-  const rates = videos.map((v) => v.engagementRate).filter((r) => r > 0);
-  if (rates.length < 2) return 0.5; // not enough signal either way
-  const mean = rates.reduce((a, b) => a + b, 0) / rates.length;
-  if (mean === 0) return 0;
-  const variance = rates.reduce((a, b) => a + (b - mean) ** 2, 0) / rates.length;
-  const cv = Math.sqrt(variance) / mean;
-  return Math.max(0, Math.min(1, 1 - cv / 2));
-}
-
 /**
  * A rough sponsorship-value range from average views, using the same CPM (cost per 1,000 views)
  * benchmarking every influencer-marketing rate card is built on. Explicitly an estimate with a
@@ -236,31 +233,7 @@ function toDemographicSlices(raw: unknown): DemographicSlice[] {
     .filter((s) => s.label && Number.isFinite(s.percent) && s.percent > 0);
 }
 
-const SPONSORSHIP_KEYWORDS = [
-  "sponsored",
-  "paid partnership",
-  "paid promotion",
-  "in partnership with",
-  "in collaboration with",
-  "brought to you by",
-  "#ad",
-  "promo code",
-  "discount code",
-  "use code",
-  "affiliate link",
-  "thanks to our sponsor",
-];
-
-const BRAND_RISK_KEYWORDS = ["scam", "fake", "clickbait", "banned", "controversy", "lawsuit", "fraud", "misleading", "offensive", "hate speech", "nsfw"];
-
 const HINGLISH_WORDS = ["kaise", "kya", "hai", "acha", "bilkul", "bhai", "aapko", "paisa", "kitna", "kaha"];
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 !== 0 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
-}
 
 /** Consistency-of-focus, not subjective relevance: what share of the sampled uploads actually
  * land in the channel's own dominant category. A channel that drifts topic constantly scores
@@ -268,42 +241,6 @@ function median(values: number[]): number {
 function computeNicheRelevancyPercent(categoryTally: Map<string, number>, topCategory: string | undefined, sampleSize: number): number {
   if (!topCategory || sampleSize === 0) return 0;
   return Math.round(((categoryTally.get(topCategory) ?? 0) / sampleSize) * 100);
-}
-
-function computeUploadsInLastDays(videos: NormalizedVideo[], days: number): number {
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-  return videos.filter((v) => v.publishedAt && v.publishedAt.getTime() >= cutoff).length;
-}
-
-/** hasPaidProductPlacement is a real signal YouTube exposes per-video; the keyword match on
- * title/description catches the sponsorships that don't set that flag (most don't). */
-function computeSponsorshipFrequencyPercent(videos: NormalizedVideo[]): number {
-  if (videos.length === 0) return 0;
-  const flagged = videos.filter((v) => {
-    if (v.hasPaidProductPlacement) return true;
-    const text = `${v.title} ${v.description}`.toLowerCase();
-    return SPONSORSHIP_KEYWORDS.some((k) => text.includes(k));
-  }).length;
-  return Math.round((flagged / videos.length) * 100);
-}
-
-/** A coarse public-metadata scan, not a substitute for an actual brand-safety review — flags
- * titles/descriptions carrying risk-adjacent language and scores down from there. */
-function computeBrandSafety(videos: NormalizedVideo[]): { label: string; score: number } {
-  const flagged = videos.filter((v) => {
-    const text = `${v.title} ${v.description}`.toLowerCase();
-    return BRAND_RISK_KEYWORDS.some((k) => text.includes(k));
-  }).length;
-  const score = Math.round(clamp(100 - flagged * 20, 30, 100));
-  const label = score >= 85 ? "Strong" : score >= 65 ? "Moderate" : "Needs Review";
-  return { label, score };
-}
-
-function computeContentFormatMix(videos: NormalizedVideo[]): { longFormPercent: number; shortsPercent: number } {
-  if (videos.length === 0) return { longFormPercent: 0, shortsPercent: 0 };
-  const shorts = videos.filter((v) => v.durationSeconds > 0 && v.durationSeconds <= 90).length;
-  const shortsPercent = Math.round((shorts / videos.length) * 100);
-  return { longFormPercent: 100 - shortsPercent, shortsPercent };
 }
 
 /** A rough script/keyword heuristic on public titles/descriptions — not language-detection-grade,
@@ -354,13 +291,6 @@ function computeRecommendedDeliverables(shortsPercent: number): string[] {
   return deliverables;
 }
 
-function computeSizeTier(subscriberCount: number): string {
-  if (subscriberCount < 10_000) return "Nano";
-  if (subscriberCount < 100_000) return "Micro";
-  if (subscriberCount < 1_000_000) return "Mid-tier";
-  return "Macro";
-}
-
 function computeBudgetTier(sponsorshipMid: number): string {
   if (sponsorshipMid < 300) return "Low";
   if (sponsorshipMid < 800) return "Low-Medium";
@@ -384,7 +314,7 @@ function computeCampaignProjection(params: {
   const reachHigh = Math.round(params.medianViews * 1.25);
   return {
     budgetTier: computeBudgetTier(params.sponsorshipMid),
-    sizeTier: computeSizeTier(params.subscriberCount),
+    sizeTier: sizeTierLabel(params.subscriberCount),
     channelAgeLabel: params.channelAge ? `Active for ${params.channelAge}` : "Channel age unavailable",
     projectedReachLow: reachLow,
     projectedReachHigh: reachHigh,

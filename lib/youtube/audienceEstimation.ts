@@ -69,6 +69,10 @@ const DEFAULT_BENCHMARK: CategoryBenchmark = {
 
 const AGE_BANDS = ["13-17", "18-24", "25-34", "35-44", "45-54", "55+"];
 
+/** Every category a creator can resolve to — shared with Discovery's category filter so the two
+ * can't drift apart, and so filtering by "gaming" means exactly what the media kit means by it. */
+export const AUDIENCE_CATEGORY_KEYS = Object.keys(CATEGORY_AUDIENCE_BENCHMARKS);
+
 // These describe how a video is made rather than what it is about — only used when no genuine
 // subject-matter category can be identified.
 const FORMAT_CATEGORIES = new Set(["review", "unboxing", "tutorial", "podcast", "vlogging"]);

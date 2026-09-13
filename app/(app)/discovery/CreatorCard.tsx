@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ExternalLink, Mail, MailX, RefreshCw, Users, Eye, TrendingUp, Clock, Radio } from "lucide-react";
+import { ExternalLink, Mail, MailX, RefreshCw, Users, Eye, TrendingUp, Clock, Radio, ShieldCheck } from "lucide-react";
 import StartOutreachButton from "./StartOutreachButton";
 import CreatorDetailModal from "./CreatorDetailModal";
 import MediaKitButton from "./MediaKitButton";
@@ -24,6 +24,20 @@ export interface CreatorCardData {
   existingInsightReportId: string | null;
   existingMediaKitId: string | null;
   niche?: string;
+
+  /* Search-time scoring — absent on Library rows, which are stored creators rather than the
+   * result of a scored query, so every field here is optional and renders only when present. */
+  relevanceScore?: number;
+  matchedTerms?: string[];
+  qualityScore?: number;
+  brandSafetyLabel?: string;
+  brandSafetyScore?: number;
+  sponsorshipFrequencyPercent?: number;
+  category?: string;
+  sizeTier?: string;
+  channelKind?: "creator" | "brand" | "media";
+  medianViews?: number;
+  uploadsLast90Days?: number;
 }
 
 const PLATFORM_LABEL: Record<string, string> = {
@@ -79,6 +93,7 @@ export default function CreatorCard({ creator }: { creator: CreatorCardData }) {
 
   const platformEntries = Object.entries(current.platformLinks).filter(([, url]) => !!url);
   const recency = daysAgo(current.lastUploadAt);
+  const hasScores = typeof current.relevanceScore === "number" || typeof current.qualityScore === "number";
 
   return (
     <div className="card p-4 flex flex-col gap-3">
@@ -100,8 +115,10 @@ export default function CreatorCard({ creator }: { creator: CreatorCardData }) {
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2 text-[12px] text-[var(--muted-2)] mt-0.5">
+          <div className="flex items-center gap-2 text-[12px] text-[var(--muted-2)] mt-0.5 flex-wrap">
             {current.country && <span>{current.country}</span>}
+            {current.sizeTier && <span>{current.sizeTier}</span>}
+            {current.category && <span className="capitalize">{current.category}</span>}
             {recency && (
               <span className="inline-flex items-center gap-0.5">
                 <Clock size={11} /> {recency}
@@ -110,6 +127,48 @@ export default function CreatorCard({ creator }: { creator: CreatorCardData }) {
           </div>
         </div>
       </div>
+
+      {hasScores && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {typeof current.relevanceScore === "number" && (
+            <ScorePill label="Match" score={current.relevanceScore} title={
+              current.matchedTerms && current.matchedTerms.length > 0
+                ? `Matched: ${current.matchedTerms.join(", ")}`
+                : "No searched terms found in this creator's content"
+            } />
+          )}
+          {typeof current.qualityScore === "number" && (
+            <ScorePill label="Quality" score={current.qualityScore} title="Engagement, reach, consistency, brand safety and recency" />
+          )}
+          {current.brandSafetyLabel && (
+            <span
+              className="px-2 py-0.5 rounded-full text-[10.5px] font-medium inline-flex items-center gap-1"
+              style={{ background: "var(--bg)", color: "var(--muted)" }}
+              title={`Brand safety scan of recent uploads: ${current.brandSafetyScore}/100`}
+            >
+              <ShieldCheck size={10} /> {current.brandSafetyLabel}
+            </span>
+          )}
+          {typeof current.sponsorshipFrequencyPercent === "number" && current.sponsorshipFrequencyPercent > 0 && (
+            <span
+              className="px-2 py-0.5 rounded-full text-[10.5px] font-medium"
+              style={{ background: "var(--bg)", color: "var(--muted)" }}
+              title="Share of recent uploads carrying sponsorship markers"
+            >
+              {current.sponsorshipFrequencyPercent}% sponsored
+            </span>
+          )}
+          {current.channelKind && current.channelKind !== "creator" && (
+            <span
+              className="px-2 py-0.5 rounded-full text-[10.5px] font-medium capitalize"
+              style={{ background: "var(--warning-bg, var(--neutral-bg))", color: "var(--warning-fg, var(--neutral-fg))" }}
+              title="Not an individual creator — you generally can't sponsor this channel"
+            >
+              {current.channelKind} channel
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-2 text-center">
         <Stat icon={<Users size={12} />} label="Subscribers" value={compactCount(current.subscriberCount)} />
@@ -197,6 +256,22 @@ export default function CreatorCard({ creator }: { creator: CreatorCardData }) {
         />
       )}
     </div>
+  );
+}
+
+/** Deliberately colour-coded rather than a bare number: a 0-100 score means nothing to someone
+ * skimming twenty cards unless "is this a good one" reads at a glance. */
+function ScorePill({ label, score, title }: { label: string; score: number; title: string }) {
+  const tone =
+    score >= 70
+      ? { background: "var(--success-bg)", color: "var(--success-fg)" }
+      : score >= 40
+        ? { background: "var(--brand-teal-light)", color: "var(--brand-teal-dark)" }
+        : { background: "var(--neutral-bg)", color: "var(--neutral-fg)" };
+  return (
+    <span className="px-2 py-0.5 rounded-full text-[10.5px] font-semibold" style={tone} title={title}>
+      {label} {score}
+    </span>
   );
 }
 
