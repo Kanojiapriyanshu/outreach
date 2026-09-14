@@ -65,6 +65,8 @@ const STAGE_LABEL: Record<string, string> = {
   NEGOTIATION: "Negotiating",
   CREATOR_SELECTED: "Creator picked",
   DEAL: "Deal",
+  INTERESTED: "Interested",
+  RATE_RECEIVED: "Rate received",
   NOT_INTERESTED: "Not interested",
 };
 

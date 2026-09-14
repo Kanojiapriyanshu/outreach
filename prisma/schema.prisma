@@ -86,6 +86,16 @@ enum PipelineStage {
   CREATOR_SELECTED
   NOT_INTERESTED
   DEAL
+  /**
+   * Influencer track only — the creator replied open to the collaboration (or asked about the
+   * brand/budget) but hasn't quoted a rate yet.
+   */
+  INTERESTED
+  /**
+   * Influencer track only — the creator quoted a rate (or sent a rate card). The amounts live on
+   * OutreachSequence.quotedRates.
+   */
+  RATE_RECEIVED
 }
 
 /**
@@ -93,12 +103,16 @@ enum PipelineStage {
  * whether they've had a chance to look at the creator list. TEAM_CHECK_NUDGE = a nudge asking
  * whether they've had a chance to check internally, sent after a non-committal reply.
  * GENERIC_NUDGE = a content-agnostic fallback for a manual send that doesn't fit either case.
+ * CREATOR_NUDGE = the influencer-track check-in, sent after the team writes to a creator by hand
+ * or the creator says they'll get back — the brand nudges talk about creator lists and teams,
+ * which reads as a mistake to an influencer.
  */
 enum ScheduledActionKind {
   TEMPLATE
   CREATOR_LIST_NUDGE
   TEAM_CHECK_NUDGE
   GENERIC_NUDGE
+  CREATOR_NUDGE
 }
 
 enum ScheduledInitialEmailKind {
@@ -170,6 +184,8 @@ enum ActivityEventType {
   MARKED_IMPORTANT
   UNMARKED_IMPORTANT
   FOLLOW_UP_CANCELLED
+  RATE_DETECTED
+  REPLY_HANDLED
 }
 
 model User {
@@ -449,6 +465,55 @@ model OutreachSequence {
    */
   lastReplyCheckAt DateTime?
 
+  // --- What the contact replied. Written by the influencer track's reply reader (see
+  // lib/creatorReplyAnalysis.ts) so the team can see who answered and what they said without
+  // opening every thread. ---
+  /**
+   * When the contact last replied (the message's own Date header).
+   */
+  lastReplyAt           DateTime?
+  /**
+   * Their latest reply with the quoted email chain stripped off.
+   */
+  lastReplyText         String?   @db.Text
+  /**
+   * How that reply was read: RATE_SHARED, INTERESTED, NON_COMMITTAL, UNINTERESTED, OPT_OUT,
+   * HUMAN_REPLY.
+   */
+  replyIntent           String?
+  /**
+   * One-line AI summary of the reply — only written when ANTHROPIC_API_KEY is configured.
+   */
+  replySummary          String?   @db.Text
+  /**
+   * How many follow-ups had gone out when they first replied (0 = answered Email 1).
+   */
+  repliedAfterStep      Int?
+  /**
+   * Set when a reply needs the team to answer (a rate, interest, a question); cleared the moment
+   * the team replies — here or directly in Gmail — or marks it handled. This is the highlight.
+   */
+  awaitingResponseSince DateTime?
+  /**
+   * Every rate the creator quoted, as QuotedRate[] ({amount, amountMax, currency, deliverable,
+   * raw, source}). A later quote replaces the price for the same deliverable only.
+   */
+  quotedRates           Json      @default("[]")
+  /**
+   * The headline rate lifted out of quotedRates (the dedicated-video price when one was given),
+   * so lists can sort and show it without parsing the JSON.
+   */
+  quotedRateAmount      Float?
+  /**
+   * ISO 4217 — null when the creator gave a number without a currency. Never assumed.
+   */
+  quotedRateCurrency    String?
+  quotedRateAt          DateTime?
+  /**
+   * Pricing shared in a form that can't be read automatically, e.g. an attached rate card.
+   */
+  rateNote              String?
+
   scheduledActions ScheduledAction[]
   messages         EmailMessage[]
   activityLogs     ActivityLog[]
@@ -457,6 +522,7 @@ model OutreachSequence {
   @@unique([emailAccountId, threadId])
   @@index([deletedAt])
   @@index([isImportant])
+  @@index([outreachType, awaitingResponseSince])
 }
 
 /**

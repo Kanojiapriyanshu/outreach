@@ -20,6 +20,7 @@ import {
   Menu,
   X,
   Compass,
+  Megaphone,
 } from "lucide-react";
 import Logo from "./Logo";
 import ThemeToggle from "./ThemeToggle";
@@ -45,6 +46,7 @@ const SECTIONS: { heading: string | null; links: { href: string; label: string; 
     links: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
       { href: "/pipeline", label: "Pipeline", icon: Users },
+      { href: "/influencers", label: "Influencer Outreach", icon: Megaphone },
       { href: "/discovery", label: "Discovery", icon: Compass },
       { href: "/track", label: "New Outreach", icon: SendHorizontal },
       { href: "/insights", label: "Insight OS", icon: LineChart },

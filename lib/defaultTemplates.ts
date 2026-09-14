@@ -139,18 +139,29 @@ Best regards,`,
   },
 ];
 
+// Email 1 is the team's own influencer pitch, word for word. The campaign-specific phrases in it
+// are variables so the same copy works for every creator and campaign:
+//   {Content_Highlights}         "midlife lifestyle, home styling, and affordable upgrade content"
+//   {Niche_Or_Product_Category}  "home furniture/living"
+//   {Deliverable_Type}           "dedicated sofa review"
+// The follow-ups are written from that draft: same voice, same single ask (their rate for a
+// dedicated video), and the same "rate first, brand details after" order.
 export const creatorTemplates: DefaultTemplate[] = [
   {
     step: 1,
     name: "Creator Email 1",
     subject: "Fidem Growth × {Creator_Name} — Paid Collaboration Opportunity",
-    body: `Hi {Creator_Name},
+    body: `Hello,
 
-This is Yash from Fidem Growth — we work with creators on paid brand partnerships.
+This is Yash from Fidem Growth — we work with US-based creators on paid brand collaborations.
 
-We're currently working with a {Niche_Or_Product_Category} brand looking to sponsor a {Deliverable_Type} video, and your channel's honest, hands-on style caught our eye. It's a paid collaboration — we handle the brand details, product shipping, and payment on our end once we align.
+I've been following your content, and it's exactly the authentic, relatable style — your {Content_Highlights} — that resonates with a brand we're currently working with in the {Niche_Or_Product_Category} space. We're putting together a shortlist for a {Deliverable_Type}, and your channel stood out as a strong fit given your engaged audience and content style.
 
-If you're open to it, just reply with your rate for a {Deliverable_Type} video and we can move fast from there.
+Before sharing further brand details, I wanted to check: would you be open to a paid collaboration? If so, could you share your rate for a dedicated video, so we can see what aligns with the campaign budget?
+
+Once we align on rate, I'll share full brand details, product info, and next steps.
+
+Looking forward to hearing from you.
 
 Thanks & Regards,`,
   },
@@ -158,29 +169,25 @@ Thanks & Regards,`,
     step: 2,
     name: "Creator Follow-Up 1",
     subject: "Re: Fidem Growth × {Creator_Name} — Paid Collaboration Opportunity",
-    body: `Hi {Creator_Name},
+    body: `Hello,
 
-I know inboxes get busy, so I'll keep this short.
+Just following up on my note below in case it got buried. We're still putting together the shortlist for the {Deliverable_Type} with a brand in the {Niche_Or_Product_Category} space, and your channel is one we'd really like to include.
 
-We still have a spot open on the shortlist for this {Niche_Or_Product_Category} review campaign, and I'd love to include you if it's a fit. If now isn't the right time, no worries at all — just a quick "not interested" helps me know to move forward with the rest of the list.
+It's a paid collaboration. If you're open to it, could you share your rate for a dedicated video? Once we align on rate, I'll send over the full brand details, product info, and next steps.
 
-If you are open to it, even a rough rate for a {Deliverable_Type} would be great to get the conversation going.
+Looking forward to hearing from you.
 
-Either way, thanks for your time — appreciate you!
-
-Best Regards,`,
+Thanks & Regards,`,
   },
   {
     step: 3,
     name: "Creator Follow-Up 2",
     subject: "Re: Fidem Growth × {Creator_Name} — Paid Collaboration Opportunity",
-    body: `Hi {Creator_Name},
+    body: `Hello,
 
-Just following up on my last note to make sure it didn't get lost in your inbox.
+Quick bump on this — we're finalizing the creator shortlist for this campaign soon, and I'd love to have your channel on it.
 
-We're closing out the creator shortlist for this campaign soon. If you're able to send over your rate for a {Deliverable_Type}, we can try to lock in your spot right away. If timing isn't right, just a quick "not interested" is all we need so we can move forward.
-
-Either way, thanks for your time!
+If you can share your rate for a dedicated video, even a ballpark, I'll check it against the campaign budget right away and come back to you with the brand details. And if paid collaborations aren't something you're taking on right now, a quick "not interested" is completely fine — it just helps me plan on our end.
 
 Thanks & Regards,`,
   },
@@ -188,13 +195,13 @@ Thanks & Regards,`,
     step: 4,
     name: "Creator Follow-Up 3",
     subject: "Re: Fidem Growth × {Creator_Name} — Paid Collaboration Opportunity",
-    body: `Hi {Creator_Name},
+    body: `Hello,
 
-Assuming you're pass-through or fully booked on sponsorships right now, so I'll stop bumping this thread.
+I don't want to keep filling your inbox, so this will be my last note on this one.
 
-We work on a lot of upcoming {Niche_Or_Product_Category} launches throughout the year. Whenever your schedule opens up or you want to see what paid campaigns we have running, feel free to drop me a line anytime.
+If you'd still like to be considered for this {Deliverable_Type}, or for future paid collaborations with the brands we work with, just reply with your rate for a dedicated video and I'll pick it straight back up.
 
-Keep up the great content!
+Wishing you all the best with your channel!
 
 Best regards,`,
   },

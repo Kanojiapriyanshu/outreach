@@ -60,6 +60,8 @@ const STAGE_STYLE: Record<string, { bg: string; fg: string }> = {
   CREATOR_SELECTED: { bg: "var(--stage-creatorselected-bg)", fg: "var(--stage-creatorselected-fg)" },
   NOT_INTERESTED: { bg: "var(--stage-notinterested-bg)", fg: "var(--stage-notinterested-fg)" },
   DEAL: { bg: "var(--stage-deal-bg)", fg: "var(--stage-deal-fg)" },
+  INTERESTED: { bg: "var(--info-bg)", fg: "var(--info-fg)" },
+  RATE_RECEIVED: { bg: "var(--success-bg)", fg: "var(--success-fg)" },
 };
 
 const STAGE_LABEL: Record<string, string> = {
@@ -70,6 +72,8 @@ const STAGE_LABEL: Record<string, string> = {
   CREATOR_SELECTED: "Creator Selected",
   NOT_INTERESTED: "Not Interested",
   DEAL: "Deal",
+  INTERESTED: "Interested",
+  RATE_RECEIVED: "Rate Received",
 };
 
 export function stageLabelText(stage: string): string {

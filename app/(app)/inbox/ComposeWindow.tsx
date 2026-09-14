@@ -161,12 +161,21 @@ export default function ComposeWindow({
     return data;
   }
 
+  /** A template loaded into the editor keeps its {Tags} until someone replaces them — sent as-is,
+   * an influencer would literally read "your {Content_Highlights}". Asks before that goes out. */
+  function confirmUnfilledTags(): boolean {
+    const tags = [...new Set([...`${subject} ${html}`.matchAll(/\{([A-Za-z_]+)\}/g)].map((m) => `{${m[1]}}`))];
+    if (tags.length === 0) return true;
+    return confirm(`This email still contains ${tags.join(", ")} — that text will be sent exactly as written. Send anyway?`);
+  }
+
   async function sendNow() {
     const validationError = validateRecipient();
     if (validationError) {
       setError(validationError);
       return;
     }
+    if (!confirmUnfilledTags()) return;
     setSending(true);
     setError(null);
     try {
@@ -186,6 +195,7 @@ export default function ComposeWindow({
       setError(validationError);
       return;
     }
+    if (!confirmUnfilledTags()) return;
     setError(null);
     setPendingScheduleAt(date);
   }

@@ -168,7 +168,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const scheduledAt = computeNextScheduledAt(seq.outreachType, 1, settings);
         await prisma.outreachSequence.update({
           where: { id: seq.id },
-          data: { status: "WAITING_FOR_REPLY", currentStep: 0, creatorListResponseAt: null },
+          data: { status: "WAITING_FOR_REPLY", currentStep: 0, creatorListResponseAt: null, awaitingResponseSince: null },
         });
         await prisma.scheduledAction.create({
           data: {
@@ -176,7 +176,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             step: 1,
             scheduledAt,
             status: "PENDING",
-            kind: "CREATOR_LIST_NUDGE",
+            // An influencer gets a check-in about the collaboration — the creator-list nudge is
+            // brand copy and would read as a mistake to them.
+            kind: seq.outreachType === "CREATOR" ? "CREATOR_NUDGE" : "CREATOR_LIST_NUDGE",
             actionKey: `${seq.id}-reply-${sent.id}`,
           },
         });
@@ -191,7 +193,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       } else {
         await prisma.outreachSequence.update({
           where: { id: seq.id },
-          data: { status: "STOPPED" },
+          data: { status: "STOPPED", awaitingResponseSince: null },
         });
         await prisma.activityLog.create({
           data: {

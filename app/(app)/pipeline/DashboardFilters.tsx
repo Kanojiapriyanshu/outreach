@@ -5,7 +5,17 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Search, X, Star } from "lucide-react";
 import { stageLabelText } from "@/app/components/Badge";
 
-const STAGES = ["FIRST_EMAIL_SENT", "CREATOR_LIST_REQUESTED", "CREATOR_LIST_SENT", "NEGOTIATION", "CREATOR_SELECTED", "NOT_INTERESTED", "DEAL"];
+const STAGES = [
+  "FIRST_EMAIL_SENT",
+  "CREATOR_LIST_REQUESTED",
+  "CREATOR_LIST_SENT",
+  "INTERESTED",
+  "RATE_RECEIVED",
+  "NEGOTIATION",
+  "CREATOR_SELECTED",
+  "NOT_INTERESTED",
+  "DEAL",
+];
 
 /** Search + date-range + pipeline filters for the dashboard table — mirrors Gmail's own search
  * box (typed text filters as you pause typing), plus the filters that actually matter for this

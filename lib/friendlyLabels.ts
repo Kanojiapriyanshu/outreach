@@ -10,8 +10,12 @@ export const VARIABLE_LABELS: Record<string, { label: string; hint: string }> = 
   Key_Product_Features: { label: "Standout features", hint: "What makes the product worth reviewing" },
   Target_Audience_Or_Angle: { label: "What shoppers compare this to", hint: "e.g. \"wireless earbuds\", \"WFH setup\"" },
   Creator_Name: { label: "Creator's name", hint: "" },
-  Niche_Or_Product_Category: { label: "Product category", hint: "e.g. tech gadget" },
-  Deliverable_Type: { label: "Type of video", hint: "e.g. dedicated review" },
+  Content_Highlights: {
+    label: "What stands out in their content",
+    hint: "e.g. midlife lifestyle, home styling, and affordable upgrade content",
+  },
+  Niche_Or_Product_Category: { label: "Brand's category", hint: "e.g. home furniture/living" },
+  Deliverable_Type: { label: "Type of video", hint: "e.g. dedicated sofa review" },
 };
 
 export function variableLabel(key: string): string {

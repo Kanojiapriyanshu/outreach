@@ -23,8 +23,9 @@ const PREVIEW_SAMPLE: Record<string, string> = {
   Key_Product_Features: "AI auto-tracking",
   Target_Audience_Or_Angle: "WFH setup",
   Creator_Name: "TechDo",
-  Niche_Or_Product_Category: "tech gadget",
-  Deliverable_Type: "dedicated review",
+  Content_Highlights: "midlife lifestyle, home styling, and affordable upgrade content",
+  Niche_Or_Product_Category: "home furniture/living",
+  Deliverable_Type: "dedicated sofa review",
 };
 
 export default function TemplatesPage() {

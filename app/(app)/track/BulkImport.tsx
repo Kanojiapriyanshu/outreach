@@ -27,7 +27,10 @@ const ROW_STATUS_LABEL: Record<RowResult["status"], string> = {
 const BRAND_COLUMNS =
   "contact_email,contact_name,recipient_type,brand_name,campaign_name,website,category,budget_range_text,budget_type,influencer_range_min,influencer_range_max,deliverables,campaign_timeline,niche_categories,key_product_features,target_audience_or_angle";
 const CREATOR_COLUMNS =
-  "contact_email,contact_name,creator_name,channel_name,channel_url,niche_or_product_category,deliverable_type";
+  "contact_email,contact_name,creator_name,channel_name,channel_url,content_highlights,niche_or_product_category,deliverable_type";
+// The creator Email 1 reads "your {Content_Highlights} — … in the {Niche_Or_Product_Category} space
+// … a shortlist for a {Deliverable_Type}", so a blank cell leaves a visible hole mid-sentence.
+const CREATOR_TEMPLATE_COLUMNS = ["content_highlights", "niche_or_product_category", "deliverable_type"];
 
 export default function BulkImport({
   outreachType,
@@ -66,8 +69,14 @@ export default function BulkImport({
       return;
     }
     if (bulkMode === "compose") {
+      const incomplete =
+        outreachType === "CREATOR" ? parsed.filter((r) => CREATOR_TEMPLATE_COLUMNS.some((c) => !r[c]?.trim())).length : 0;
       const confirmed = confirm(
-        `This will send a real email to ${parsed.length} people right now — this can't be undone. Continue?`
+        `This will send a real email to ${parsed.length} people right now — this can't be undone.` +
+          (incomplete > 0
+            ? `\n\n${incomplete} row${incomplete === 1 ? " is" : "s are"} missing ${CREATOR_TEMPLATE_COLUMNS.join(", ")} — those emails will have a gap mid-sentence.\n\n`
+            : " ") +
+          "Continue?"
       );
       if (!confirmed) return;
     }
@@ -105,6 +114,7 @@ export default function BulkImport({
               Target_Audience_Or_Angle: r.target_audience_or_angle,
             }
           : {
+              Content_Highlights: r.content_highlights,
               Niche_Or_Product_Category: r.niche_or_product_category,
               Deliverable_Type: r.deliverable_type,
             },

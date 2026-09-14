@@ -7,7 +7,9 @@ import SequenceControls from "./SequenceControls";
 import StageControl from "./StageControl";
 import UpcomingFollowUpPreview from "./UpcomingFollowUpPreview";
 import CreatorListResponseControl from "./CreatorListResponseControl";
+import CreatorResponsePanel from "./CreatorResponsePanel";
 import TrashBanner from "./TrashBanner";
+import { parseStoredRates } from "@/lib/creatorReplyAnalysis";
 
 // A brand only enters this part of the pipeline once the creator shortlist has actually gone
 // out — mirrors PRE_LIST_STAGES in lib/scheduler.ts.
@@ -37,7 +39,10 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
     ? [...sequence.scheduledActions].filter((a) => a.status === "CANCELLED").sort((a, b) => b.step - a.step)[0]
     : undefined;
   const displayedAction = pending ?? mostRecentCancelled;
-  const creatorListSent = !PRE_LIST_STAGES.includes(sequence.stage);
+  const isCreator = sequence.outreachType === "CREATOR";
+  // Influencer threads have no creator list — their Interested/Rate Received stages aren't "past
+  // the list", so that card only ever applies to brands.
+  const creatorListSent = !isCreator && !PRE_LIST_STAGES.includes(sequence.stage);
   const pendingNudge = pending?.kind === "CREATOR_LIST_NUDGE" ? pending : undefined;
 
   const timeline = [
@@ -67,6 +72,22 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
 
       {sequence.deletedAt && <TrashBanner sequenceId={sequence.id} deletedAt={sequence.deletedAt.toISOString()} />}
 
+      {isCreator && (
+        <CreatorResponsePanel
+          sequenceId={sequence.id}
+          status={sequence.status}
+          lastReplyAt={sequence.lastReplyAt?.toISOString() ?? null}
+          replyIntent={sequence.replyIntent}
+          replySummary={sequence.replySummary}
+          lastReplyText={sequence.lastReplyText}
+          repliedAfterStep={sequence.repliedAfterStep}
+          awaitingSince={sequence.awaitingResponseSince?.toISOString() ?? null}
+          rates={parseStoredRates(sequence.quotedRates)}
+          rateNote={sequence.rateNote}
+          followUpScheduled={!!pending}
+        />
+      )}
+
       <div className="card p-5">
         <h2 className="font-semibold text-sm mb-3.5 text-[var(--ink)]">Actions</h2>
         <SequenceControls
@@ -80,12 +101,13 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
             <p className="text-sm text-[var(--muted)] mt-3">
               {displayedAction.status === "CANCELLED" ? (
                 <>
-                  Follow-up #{displayedAction.step} was cancelled — it was going to send on{" "}
-                  {formatDateTime(displayedAction.scheduledAt)}.
+                  {displayedAction.kind === "CREATOR_NUDGE" ? "Check-in" : "Follow-up"} #{displayedAction.step} was cancelled — it
+                  was going to send on {formatDateTime(displayedAction.scheduledAt)}.
                 </>
               ) : (
                 <>
-                  Next up: follow-up #{displayedAction.step} on {formatDateTime(displayedAction.scheduledAt)}
+                  Next up: {displayedAction.kind === "CREATOR_NUDGE" ? "check-in" : "follow-up"} #{displayedAction.step} on{" "}
+                  {formatDateTime(displayedAction.scheduledAt)}
                 </>
               )}
             </p>
@@ -96,10 +118,11 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
           </>
         )}
         <div className="mt-4 pt-4" style={{ borderTop: "1px solid var(--border)" }}>
-          <StageControl sequenceId={sequence.id} stage={sequence.stage} />
+          <StageControl sequenceId={sequence.id} stage={sequence.stage} outreachType={sequence.outreachType} />
           <p className="text-xs text-[var(--muted-2)] mt-1.5">
-            First Email Sent, Creator List Sent, and Not Interested are set automatically from the inbox — Negotiation,
-            Creator Selected, and Deal are calls only you can make.
+            {isCreator
+              ? "Interested, Rate Received, and Not Interested are set automatically from their replies — correct them here, or move a creator on to Negotiation or Deal."
+              : "First Email Sent, Creator List Sent, and Not Interested are set automatically from the inbox — Negotiation, Creator Selected, and Deal are calls only you can make."}
           </p>
         </div>
       </div>

@@ -295,4 +295,28 @@ GET/POST /api/team                                    — team member management
 
 ---
 
+## 14. Influencer outreach track (`outreachType: CREATOR`)
+
+Same machinery as the brand track — Email 1, follow-ups 1/2/3 on the creator cadence, the sending window, quotas, threading — with its own reply handling, because an influencer is asked for a **rate**, not whether they want a creator list.
+
+- **Templates:** Email 1 is the team's own influencer pitch (`lib/defaultTemplates.ts`) with `{Content_Highlights}`, `{Niche_Or_Product_Category}` and `{Deliverable_Type}` as the campaign-specific phrases; follow-ups are written from it. Edited on `/templates` like any other.
+- **Reading replies:** `checkThreadForTerminalEvent()` sends creator threads to `handleCreatorReply()` instead of the brand classifier. Consecutive replies (up to the team's own next message) are read together from the **full message body** (`getThreadFullText`), not the snippet. `lib/creatorReplyAnalysis.ts` is the rule-based reader (rates, currencies, ranges, deliverables, intent); `lib/creatorReplyAI.ts` layers the model on top when `ANTHROPIC_API_KEY` is set, and only keeps amounts written in the reply and currencies the reply signals.
+- **Outcomes:**
+
+| Reply | Status / stage | Highlight (`awaitingResponseSince`) | Follow-ups |
+|---|---|---|---|
+| Quotes a rate / sends a rate card | `REPLIED` / `RATE_RECEIVED`, rates saved to `quotedRates` | set | stopped |
+| Interested, asks about brand/budget | `REPLIED` / `INTERESTED` | set | stopped |
+| Anything else a person should read | `REPLIED` / unchanged | set | stopped |
+| "Let me get back to you" | `WAITING_FOR_REPLY` | — | replaced by one `CREATOR_NUDGE` after `nonCommittalDelayDays` |
+| Declines | `REPLIED` / `NOT_INTERESTED` | — | stopped |
+| Opt-out | `UNSUBSCRIBED` / `NOT_INTERESTED` + Do Not Email | — | stopped |
+
+  Ambiguous replies fall to "a person should read" — never to "keep following up" (unlike the brand heuristic's short-reply rule). Stages only move forward automatically.
+- **The team replying** (in Gmail or the in-app inbox) clears the highlight, keeps the stage, and schedules `CREATOR_NUDGE` check-ins (creator-voiced copy in `lib/genericNudgeTemplates.ts`) instead of the brand's creator-list nudge.
+- **Rates:** `quotedRates` holds every price (`{amount, amountMax, currency, deliverable, raw, source}`); a later quote replaces only the same deliverable. `quotedRateAmount`/`quotedRateCurrency` lift the headline (dedicated-video) price. A currency is never assumed. The team can record or correct a rate by hand (`PUT /api/sequences/[id]/rate`).
+- **UI:** `/influencers` — contacted/replied/needs-reply/rates/following-up/no-reply/declined/bounced counts, "first replied after" breakdown, filters, search, CSV export (`GET /api/influencers/export`, formula-injection safe). The sequence page shows the reply, rates and a rate editor; `POST /api/sequences/[id]/handled` clears the highlight for a reply dealt with elsewhere. Creator stages settable by hand: Interested, Rate Received, Negotiation, Selected for the campaign, Deal, Not Interested (the last two also cancel queued follow-ups).
+
+---
+
 *This document reflects the system as of the state of `D:\Fidem outreach` at the time it was written. It is not automatically kept in sync with the code — if it's been a while, diff it against `prisma/schema.prisma` and `lib/scheduler.ts` before trusting it fully.*

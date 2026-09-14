@@ -135,10 +135,43 @@ Best regards,`,
   },
 ];
 
+/**
+ * Influencer track: sent after the team writes to a creator by hand (brand details, a counter-offer)
+ * or the creator says they'll get back, and then nothing comes back. Talks about "the
+ * collaboration" — never a creator list or checking with a team, which only make sense to a brand.
+ */
+const CREATOR_NUDGE_TEMPLATES: { step: number; body: string }[] = [
+  {
+    step: 1,
+    body: `Hello,
+
+Just checking in on my last message about the collaboration — let me know your thoughts when you get a chance, so we can keep things moving on our end.
+
+Thanks & Regards,`,
+  },
+  {
+    step: 2,
+    body: `Hello,
+
+Following up on this in case it slipped past. Happy to answer any questions about the brand, the product, or the deliverables if that would help.
+
+Thanks & Regards,`,
+  },
+  {
+    step: 3,
+    body: `Hello,
+
+Last check-in from me on this one. If the timing isn't right, no worries at all — just reply here whenever you'd like to pick it back up.
+
+Best regards,`,
+  },
+];
+
 const TEMPLATE_SETS = {
   CREATOR_LIST_NUDGE: CREATOR_LIST_NUDGE_TEMPLATES,
   TEAM_CHECK_NUDGE: TEAM_CHECK_NUDGE_TEMPLATES,
   GENERIC_NUDGE: GENERIC_NUDGE_TEMPLATES,
+  CREATOR_NUDGE: CREATOR_NUDGE_TEMPLATES,
 } as const;
 
 export type NudgeKind = keyof typeof TEMPLATE_SETS;

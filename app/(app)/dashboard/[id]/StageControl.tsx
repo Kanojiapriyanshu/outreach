@@ -3,21 +3,50 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-const MANUAL_STAGES = [
-  { value: "NEGOTIATION", label: "Negotiation" },
-  { value: "CREATOR_SELECTED", label: "Creator Selected" },
-  { value: "DEAL", label: "Deal" },
-];
+const MANUAL_STAGES: Record<"BRAND" | "CREATOR", { value: string; label: string }[]> = {
+  BRAND: [
+    { value: "NEGOTIATION", label: "Negotiation" },
+    { value: "CREATOR_SELECTED", label: "Creator Selected" },
+    { value: "DEAL", label: "Deal" },
+  ],
+  CREATOR: [
+    { value: "INTERESTED", label: "Interested" },
+    { value: "RATE_RECEIVED", label: "Rate Received" },
+    { value: "NEGOTIATION", label: "Negotiation" },
+    { value: "CREATOR_SELECTED", label: "Selected for the campaign" },
+    { value: "DEAL", label: "Deal" },
+    { value: "NOT_INTERESTED", label: "Not Interested" },
+  ],
+};
 
-export default function StageControl({ sequenceId, stage }: { sequenceId: string; stage: string }) {
+// Mirrors CLOSING_STAGES in app/api/sequences/[id]/stage/route.ts.
+const CLOSING_STAGES = ["DEAL", "NOT_INTERESTED"];
+
+export default function StageControl({
+  sequenceId,
+  stage,
+  outreachType = "BRAND",
+}: {
+  sequenceId: string;
+  stage: string;
+  outreachType?: "BRAND" | "CREATOR";
+}) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isManuallySet = MANUAL_STAGES.some((s) => s.value === stage);
+  const options = MANUAL_STAGES[outreachType];
+  const isManuallySet = options.some((s) => s.value === stage);
 
   async function setStage(value: string) {
     if (!value) return;
+    if (
+      outreachType === "CREATOR" &&
+      CLOSING_STAGES.includes(value) &&
+      !confirm("This closes out the creator and cancels any follow-ups still scheduled. Continue?")
+    ) {
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -48,7 +77,7 @@ export default function StageControl({ sequenceId, stage }: { sequenceId: string
         <option value="" disabled>
           Choose…
         </option>
-        {MANUAL_STAGES.map((s) => (
+        {options.map((s) => (
           <option key={s.value} value={s.value}>
             {s.label}
           </option>

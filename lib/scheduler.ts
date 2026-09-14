@@ -2,11 +2,21 @@ import { prisma } from "@/lib/prisma";
 import {
   gmailClientFor,
   getThreadSummary,
+  getThreadFullText,
   sendFollowUpEmail,
   getRfc822MessageId,
   looksLikeBounce,
   looksLikeAutoReply,
 } from "@/lib/gmail";
+import { analyzeCreatorReply } from "@/lib/creatorReplyAI";
+import {
+  findEmailAddresses,
+  formatRate,
+  mergeRates,
+  parseStoredRates,
+  primaryRate,
+  type CreatorReplyAnalysis,
+} from "@/lib/creatorReplyAnalysis";
 import type { gmail_v1 } from "googleapis";
 import { renderTemplate } from "@/lib/templates";
 import { advanceState, MAX_FOLLOW_UPS, type SequenceState } from "@/lib/stateMachine";
@@ -41,12 +51,17 @@ type SequenceWithContact = {
   emailAccountId: string;
   lastKnownMsgCount: number;
   stage: string;
+  currentStep: number;
   creatorListResponseAt: Date | null;
+  lastReplyAt: Date | null;
+  quotedRates: unknown;
   contact: { name: string; email: string };
 };
 
 type ThreadCheckResult =
-  | { terminal: false; manualSendDetected: boolean }
+  // `rescheduled`: a "will get back to you" reply just replaced the pending follow-up with a later
+  // check-in — whatever send was about to happen must not go out now.
+  | { terminal: false; manualSendDetected: boolean; rescheduled?: boolean }
   | { terminal: true; status: "REPLIED" | "BOUNCED" | "UNSUBSCRIBED" };
 
 /**
@@ -94,6 +109,7 @@ async function handleManualOutboundMessage(
   message: { id: string; subject: string },
   newMessageCount: number
 ) {
+  const isCreator = seq.outreachType === "CREATOR";
   const claimed = await claimSequence(seq, {
     status: "WAITING_FOR_REPLY",
     currentStep: 0,
@@ -101,12 +117,16 @@ async function handleManualOutboundMessage(
     // A fresh round of nudges starting means we're waiting on a new response — don't carry over
     // the "Response Received" marker from whatever round came before this one.
     creatorListResponseAt: null,
+    // The team just wrote back, so any reply that was waiting on them has been answered.
+    awaitingResponseSince: null,
   });
   if (!claimed) return; // another concurrent check already picked up this same message
 
   const settings = await prisma.automationSettings.findFirstOrThrow();
   const scheduledAt = computeNextScheduledAt(seq.outreachType, 1, settings);
-  const stageChanges = !MANUAL_OR_TERMINAL_STAGES.includes(seq.stage) && seq.stage !== "CREATOR_LIST_SENT";
+  // An influencer thread has no creator list: the team writing to a creator is brand details or a
+  // counter-offer, so the stage stays where the reply reader put it and the nudge is a check-in.
+  const stageChanges = !isCreator && !MANUAL_OR_TERMINAL_STAGES.includes(seq.stage) && seq.stage !== "CREATOR_LIST_SENT";
 
   await prisma.$transaction([
     prisma.emailMessage.create({
@@ -134,7 +154,7 @@ async function handleManualOutboundMessage(
         step: 1,
         scheduledAt,
         status: "PENDING",
-        kind: "CREATOR_LIST_NUDGE",
+        kind: isCreator ? "CREATOR_NUDGE" : "CREATOR_LIST_NUDGE",
         actionKey: `${seq.id}-manual-${message.id}`,
       },
     }),
@@ -142,7 +162,9 @@ async function handleManualOutboundMessage(
       data: {
         sequenceId: seq.id,
         eventType: "MANUAL_MESSAGE_DETECTED",
-        description: `Spotted a message you sent directly from Gmail — restarted the reply timer. We'll nudge about the creator list if there's no reply by ${formatDateTime(scheduledAt)}.`,
+        description: isCreator
+          ? `Spotted a message you sent directly from Gmail — restarted the reply timer. If they don't answer, we'll check in on ${formatDateTime(scheduledAt)}.`
+          : `Spotted a message you sent directly from Gmail — restarted the reply timer. We'll nudge about the creator list if there's no reply by ${formatDateTime(scheduledAt)}.`,
       },
     }),
     ...(stageChanges
@@ -153,6 +175,183 @@ async function handleManualOutboundMessage(
         ]
       : []),
   ]);
+}
+
+// Influencer stages only ever move forward on their own: a "sounds good" after a quoted rate must
+// not knock the creator back from Rate Received to Interested.
+const CREATOR_STAGE_ORDER: string[] = ["FIRST_EMAIL_SENT", "INTERESTED", "RATE_RECEIVED", "NEGOTIATION", "CREATOR_SELECTED", "DEAL"];
+const CREATOR_STAGE_NAME: Partial<Record<PipelineStage, string>> = {
+  INTERESTED: "Interested",
+  RATE_RECEIVED: "Rate Received",
+  NOT_INTERESTED: "Not Interested",
+};
+
+function creatorStageAfter(current: string, reached: PipelineStage): PipelineStage {
+  const from = CREATOR_STAGE_ORDER.indexOf(current);
+  const to = CREATOR_STAGE_ORDER.indexOf(reached);
+  return (from === -1 || to > from ? reached : current) as PipelineStage;
+}
+
+/** The reply's own Date header — falls back to now for a missing or nonsensical one. */
+function replyDate(raw: string): Date {
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) || parsed.getTime() > Date.now() + 60_000 ? new Date() : parsed;
+}
+
+/**
+ * Acts on an influencer's reply, read by lib/creatorReplyAI.ts. Anything the team has to answer —
+ * a rate, interest, a question — stops the follow-ups and sets awaitingResponseSince, which is the
+ * highlight on the Influencer Outreach page. A decline or opt-out stops them without the highlight;
+ * "I'll get back to you" swaps the cadence for a single later check-in.
+ */
+async function handleCreatorReply(
+  seq: SequenceWithContact,
+  replies: { from: string; date: string }[],
+  text: string,
+  analysis: CreatorReplyAnalysis,
+  watermark: number
+): Promise<ThreadCheckResult> {
+  const latest = replies[replies.length - 1];
+  const from = latest.from;
+  const common = {
+    lastKnownMsgCount: watermark,
+    lastReplyAt: replyDate(latest.date),
+    lastReplyText: text.slice(0, 4000) || null,
+    replyIntent: analysis.intent,
+    replySummary: analysis.summary,
+    ...(seq.lastReplyAt ? {} : { repliedAfterStep: seq.currentStep }),
+  };
+  const notClaimed: ThreadCheckResult = { terminal: false, manualSendDetected: false };
+  const contactEmail = seq.contact.email.toLowerCase();
+  const otherAddresses = findEmailAddresses(text).filter((address) => address !== contactEmail);
+  const redirectNote =
+    otherAddresses.length > 0
+      ? ` They mention ${otherAddresses.slice(0, 2).join(" and ")} — possibly a manager to reply to instead.`
+      : "";
+  const cancelPending = () =>
+    prisma.scheduledAction.updateMany({ where: { sequenceId: seq.id, status: "PENDING" }, data: { status: "CANCELLED" } });
+  const stageLog = (stage: PipelineStage) =>
+    stage === seq.stage
+      ? []
+      : [
+          prisma.activityLog.create({
+            data: { sequenceId: seq.id, eventType: "STAGE_CHANGED", description: `Stage set to ${CREATOR_STAGE_NAME[stage] ?? stage}.` },
+          }),
+        ];
+
+  if (analysis.intent === "OPT_OUT") {
+    if (!(await claimSequence(seq, { ...common, status: "UNSUBSCRIBED", stage: "NOT_INTERESTED", awaitingResponseSince: null }))) {
+      return notClaimed;
+    }
+    await prisma.$transaction([
+      prisma.suppressedContact.upsert({
+        where: { email: contactEmail },
+        update: {},
+        create: { email: contactEmail, reason: "Replied asking not to be contacted" },
+      }),
+      cancelPending(),
+      prisma.activityLog.create({
+        data: {
+          sequenceId: seq.id,
+          eventType: "UNSUBSCRIBE_DETECTED",
+          description: `${from} asked not to be contacted again — added to the Do Not Email list.`,
+        },
+      }),
+      ...stageLog("NOT_INTERESTED"),
+    ]);
+    return { terminal: true, status: "UNSUBSCRIBED" };
+  }
+
+  if (analysis.intent === "UNINTERESTED") {
+    if (!(await claimSequence(seq, { ...common, status: "REPLIED", stage: "NOT_INTERESTED", awaitingResponseSince: null }))) {
+      return notClaimed;
+    }
+    await prisma.$transaction([
+      cancelPending(),
+      prisma.activityLog.create({
+        data: { sequenceId: seq.id, eventType: "REPLY_DETECTED", description: `${from} declined the collaboration — follow-ups stopped.${redirectNote}` },
+      }),
+      ...stageLog("NOT_INTERESTED"),
+    ]);
+    return { terminal: true, status: "REPLIED" };
+  }
+
+  if (analysis.intent === "NON_COMMITTAL") {
+    if (!(await claimSequence(seq, { ...common, status: "WAITING_FOR_REPLY", currentStep: 0, awaitingResponseSince: null }))) {
+      return notClaimed;
+    }
+    const settings = await prisma.automationSettings.findFirstOrThrow();
+    const scheduledAt = pickRandomSendTime(addCalendarDays(new Date(), settings.nonCommittalDelayDays), settings);
+    await prisma.$transaction([
+      cancelPending(),
+      prisma.scheduledAction.create({
+        data: {
+          sequenceId: seq.id,
+          step: 1,
+          scheduledAt,
+          status: "PENDING",
+          kind: "CREATOR_NUDGE",
+          actionKey: `${seq.id}-creator-noncommittal-${Date.now()}`,
+        },
+      }),
+      prisma.activityLog.create({
+        data: {
+          sequenceId: seq.id,
+          eventType: "GENERIC_REPLY_DETECTED",
+          description: `${from} said they'll get back to you — we'll check in on ${formatDateTime(scheduledAt)} if they don't.${redirectNote}`,
+        },
+      }),
+    ]);
+    return { terminal: false, manualSendDetected: false, rescheduled: true };
+  }
+
+  // RATE_SHARED, INTERESTED, or any other reply a person should read: stop following up and put it
+  // in front of the team.
+  const stage =
+    analysis.intent === "RATE_SHARED"
+      ? creatorStageAfter(seq.stage, "RATE_RECEIVED")
+      : analysis.intent === "INTERESTED"
+        ? creatorStageAfter(seq.stage, "INTERESTED")
+        : (seq.stage as PipelineStage);
+
+  let rateData = {};
+  if (analysis.intent === "RATE_SHARED") {
+    const rates = mergeRates(parseStoredRates(seq.quotedRates), analysis.rates);
+    const primary = primaryRate(rates);
+    rateData = {
+      quotedRates: rates,
+      quotedRateAmount: primary?.amount ?? null,
+      quotedRateCurrency: primary?.currency ?? null,
+      quotedRateAt: new Date(),
+      rateNote: analysis.rates.length > 0 ? null : analysis.rateNote,
+    };
+  }
+
+  if (!(await claimSequence(seq, { ...common, status: "REPLIED", stage, awaitingResponseSince: new Date(), ...rateData }))) {
+    return notClaimed;
+  }
+
+  const description =
+    analysis.intent === "RATE_SHARED"
+      ? analysis.rates.length > 0
+        ? `${from} shared their rate: ${analysis.rates.map((rate) => formatRate(rate)).join(", ")}. Follow-ups stopped — reply to move it forward.`
+        : `${from} shared a rate card or media kit — open the email to see their pricing. Follow-ups stopped.`
+      : analysis.intent === "INTERESTED"
+        ? `${from} is interested but hasn't given a rate yet — follow-ups stopped. Reply with what they asked for.`
+        : `${from} replied — follow-ups stopped. Have a look and reply.`;
+
+  await prisma.$transaction([
+    cancelPending(),
+    prisma.activityLog.create({
+      data: {
+        sequenceId: seq.id,
+        eventType: analysis.intent === "RATE_SHARED" ? "RATE_DETECTED" : "REPLY_DETECTED",
+        description: description + redirectNote,
+      },
+    }),
+    ...stageLog(stage),
+  ]);
+  return { terminal: true, status: "REPLIED" };
 }
 
 /**
@@ -210,7 +409,7 @@ async function handleNonCommittalReply(seq: SequenceWithContact, from: string, n
  * background check (every tick, regardless of whether a follow-up is due yet) and the final
  * send-protection check right before actually sending a follow-up.
  */
-async function checkThreadForTerminalEvent(
+export async function checkThreadForTerminalEvent(
   gmail: gmail_v1.Gmail,
   seq: SequenceWithContact
 ): Promise<ThreadCheckResult> {
@@ -218,19 +417,35 @@ async function checkThreadForTerminalEvent(
   const newMessages = thread.messages.slice(seq.lastKnownMsgCount);
   if (newMessages.length === 0) return { terminal: false, manualSendDetected: false };
 
-  const knownIds = new Set(
-    (await prisma.emailMessage.findMany({ where: { sequenceId: seq.id }, select: { providerMessageId: true } })).map(
-      (m) => m.providerMessageId
-    )
-  );
+  const recorded = await prisma.emailMessage.findMany({
+    where: { sequenceId: seq.id },
+    select: { providerMessageId: true, direction: true, body: true },
+  });
+  const knownIds = new Set(recorded.map((m) => m.providerMessageId));
 
   let sawOnlyAutoReplies = false;
   let msgCountSoFar = seq.lastKnownMsgCount;
   const creatorListAlreadySent = !PRE_LIST_STAGES.includes(seq.stage);
+  const isFromContact = (msg: { from: string }) => msg.from.toLowerCase().includes(seq.contact.email.toLowerCase());
 
-  for (const m of newMessages) {
+  // Full message bodies are fetched only when an influencer thread has a real reply to read. The
+  // snippet is ~200 characters — exactly where a rate at the end of a friendly reply gets cut off.
+  let bodies: Map<string, string> | undefined;
+  async function bodyOf(msg: { id: string; snippet: string }): Promise<string> {
+    if (!bodies) {
+      try {
+        bodies = new Map((await getThreadFullText(gmail, seq.threadId)).map((t) => [t.id, t.text]));
+      } catch (err) {
+        console.error(`[reply check] couldn't read the full thread for sequence ${seq.id}:`, err);
+        bodies = new Map();
+      }
+    }
+    return bodies.get(msg.id)?.trim() || msg.snippet;
+  }
+
+  for (const [index, m] of newMessages.entries()) {
     msgCountSoFar++;
-    const fromContact = m.from.toLowerCase().includes(seq.contact.email.toLowerCase());
+    const fromContact = isFromContact(m);
 
     if (!fromContact) {
       // Outbound message — either one this system sent (already in EmailMessage) or one the team
@@ -269,6 +484,40 @@ async function checkThreadForTerminalEvent(
       continue;
     }
 
+    if (seq.outreachType === "CREATOR") {
+      // Consecutive replies up to the team's own next message are read as one answer, so a quick
+      // "Hi!" followed by "my rate is $900" doesn't leave the rate unread behind the greeting.
+      // Stopping at the team's message leaves it for the next pass, which restarts the reply timer.
+      const batch: typeof newMessages = [];
+      let end = index;
+      while (end < newMessages.length) {
+        const next = newMessages[end];
+        const nextFromContact = isFromContact(next);
+        if (!nextFromContact && !knownIds.has(next.id)) break;
+        if (nextFromContact && looksLikeBounce(next)) break;
+        if (nextFromContact && !looksLikeAutoReply(next)) batch.push(next);
+        end++;
+      }
+      const texts: string[] = [];
+      for (const reply of batch) texts.push(await bodyOf(reply));
+      const text = texts.join("\n\n");
+      const analysis = await analyzeCreatorReply(text, {
+        sentBodies: recorded.filter((r) => r.direction === "OUT").map((r) => r.body),
+      });
+      if (analysis.intent === "AUTO_REPLY") {
+        await prisma.activityLog.create({
+          data: {
+            sequenceId: seq.id,
+            eventType: "AUTO_REPLY_DETECTED",
+            description: `Got an automatic reply from ${m.from} — still waiting for a real answer.`,
+          },
+        });
+        sawOnlyAutoReplies = true;
+        continue;
+      }
+      return handleCreatorReply(seq, batch, text, analysis, seq.lastKnownMsgCount + end);
+    }
+
     // Beyond the header-based auto-reply heuristic above: ask the LLM classifier (if configured)
     // for the nuance a header can't catch — a real answer vs. a non-answer vs. wanting the
     // creator list vs. having chosen one vs. a decline vs. an explicit opt-out.
@@ -288,7 +537,7 @@ async function checkThreadForTerminalEvent(
 
     if (classification === "NON_COMMITTAL") {
       await handleNonCommittalReply(seq, m.from, thread.messages.length);
-      return { terminal: false, manualSendDetected: false };
+      return { terminal: false, manualSendDetected: false, rescheduled: true };
     }
 
     if (classification === "WANTS_CREATOR_LIST") {
@@ -470,7 +719,7 @@ export async function runContinuousReplyCheck() {
   return results;
 }
 
-const NUDGE_KINDS = new Set<string>(["CREATOR_LIST_NUDGE", "TEAM_CHECK_NUDGE", "GENERIC_NUDGE"]);
+const NUDGE_KINDS = new Set<string>(["CREATOR_LIST_NUDGE", "TEAM_CHECK_NUDGE", "GENERIC_NUDGE", "CREATOR_NUDGE"]);
 
 type RenderableAction = {
   kind: string;
@@ -619,6 +868,11 @@ async function processScheduledActionClaimed(
     // nudge cycle for the message the team just sent — nothing left to do for the old one.
     return { skipped: true, reason: "Manual message detected; follow-up cycle reset" };
   }
+  if (checkResult.rescheduled) {
+    // The reply just replaced this follow-up with a later check-in; sending it now would chase
+    // someone minutes after they wrote back.
+    return { skipped: true, reason: "Reply received; check-in rescheduled" };
+  }
 
   await prisma.activityLog.create({
     data: { sequenceId: seq.id, eventType: "NO_REPLY_FOUND", description: "No reply yet." },
@@ -706,7 +960,9 @@ async function processScheduledActionClaimed(
         // Silence through all 3 follow-ups reads as "not interested" for the pipeline view too —
         // unless the team already made a manual call on this one (Negotiation/Creator
         // Selected/Deal), which should never be overwritten by the automation.
-        ...(next.status === "COMPLETED" && !MANUAL_OR_TERMINAL_STAGES.includes(seq.stage)
+        // A creator who quoted a rate and then went quiet keeps Rate Received — that price is
+        // still the useful fact about them.
+        ...(next.status === "COMPLETED" && !MANUAL_OR_TERMINAL_STAGES.includes(seq.stage) && seq.stage !== "RATE_RECEIVED"
           ? { stage: "NOT_INTERESTED" as const }
           : {}),
       },

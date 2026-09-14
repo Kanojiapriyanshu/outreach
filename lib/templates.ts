@@ -8,6 +8,7 @@ export const BRAND_VARIABLES = [
 
 export const CREATOR_VARIABLES = [
   "Creator_Name",
+  "Content_Highlights",
   "Niche_Or_Product_Category",
   "Deliverable_Type",
 ] as const;
