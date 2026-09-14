@@ -18,9 +18,19 @@ name: Worker tick
 # lib/scheduler.ts claimScheduledAction), so two ticks can never send the same email twice.
 #
 # This repo is public, so Actions minutes are free and unlimited.
+#
+# Measured directly (Sept 10-14): even with this self-healing design, real gaps between one run
+# ending and the next starting have regularly been 1-7 HOURS, not the ~10 minutes the schedule
+# below implies. GitHub's own scheduler is the bottleneck — a scheduled trigger it skips is gone,
+# not retried, and skipped occurrences cluster rather than spreading out evenly. Firing every 5
+# minutes instead of 10 gives it roughly twice as many chances to land one that actually queues;
+# it does not fix the underlying unreliability. If multi-hour gaps keep recurring, the durable fix
+# is an external always-on pinger (e.g. a free cron-ping service, or Vercel Cron on a paid plan)
+# hitting /api/cron/tick directly on a real 1-2 minute cadence, bypassing GitHub's scheduler
+# entirely rather than working around it.
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch: {} # lets you trigger a worker run manually from the Actions tab too
 
 concurrency:
