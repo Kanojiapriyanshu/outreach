@@ -5,12 +5,13 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getUnitsUsedToday, PLATFORM_KEYS } from "@/lib/youtube/discoveryEngine";
 import SearchTab from "./SearchTab";
+import CampaignTab from "./CampaignTab";
 import LibraryFilters from "./LibraryFilters";
 import CreatorCard, { type CreatorCardData } from "./CreatorCard";
 
 export const dynamic = "force-dynamic";
 
-type Tab = "search" | "library";
+type Tab = "campaign" | "search" | "library";
 const PAGE_SIZE = 24;
 
 interface LibrarySearchParams {
@@ -28,7 +29,7 @@ interface LibrarySearchParams {
 
 export default async function DiscoveryPage({ searchParams }: { searchParams: Promise<LibrarySearchParams> }) {
   const params = await searchParams;
-  const tab: Tab = params.tab === "library" ? "library" : "search";
+  const tab: Tab = params.tab === "library" ? "library" : params.tab === "search" ? "search" : "campaign";
   const unitsUsedToday = await getUnitsUsedToday();
 
   return (
@@ -39,20 +40,20 @@ export default async function DiscoveryPage({ searchParams }: { searchParams: Pr
             <Compass size={22} /> Creator Discovery
           </h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
-            Search YouTube by niche, country, audience size, and platform presence — business email and social
-            links are pulled straight from each channel automatically, so there&apos;s nothing left to hunt for by
-            hand.
+            Campaign Match reads each creator&apos;s actual upload history to qualify them for a brief; Quick Search
+            finds channels by keyword. Business email and social links are pulled from every channel automatically.
           </p>
         </div>
         <div className="text-xs text-[var(--muted-2)] whitespace-nowrap">{unitsUsedToday.toLocaleString()} API units used today</div>
       </div>
 
       <div className="flex gap-1">
-        <TabLink tab="search" active={tab === "search"} label="Search" />
+        <TabLink tab="campaign" active={tab === "campaign"} label="Campaign Match" />
+        <TabLink tab="search" active={tab === "search"} label="Quick Search" />
         <TabLink tab="library" active={tab === "library"} label="Library" />
       </div>
 
-      {tab === "search" ? <SearchTab /> : <LibraryTab params={params} />}
+      {tab === "campaign" ? <CampaignTab /> : tab === "search" ? <SearchTab /> : <LibraryTab params={params} />}
     </div>
   );
 }

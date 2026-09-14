@@ -286,14 +286,15 @@ const BRAND_RISK_KEYWORDS = ["scam", "fake", "clickbait", "banned", "controversy
 
 /** hasPaidProductPlacement is a real signal YouTube exposes per-video; the keyword match on
  * title/description catches the sponsorships that don't set that flag (most don't). */
+export function isSponsoredVideo(v: NormalizedVideo): boolean {
+  if (v.hasPaidProductPlacement) return true;
+  const text = `${v.title} ${v.description}`.toLowerCase();
+  return SPONSORSHIP_KEYWORDS.some((k) => text.includes(k));
+}
+
 export function computeSponsorshipFrequencyPercent(videos: NormalizedVideo[]): number {
   if (videos.length === 0) return 0;
-  const flagged = videos.filter((v) => {
-    if (v.hasPaidProductPlacement) return true;
-    const text = `${v.title} ${v.description}`.toLowerCase();
-    return SPONSORSHIP_KEYWORDS.some((k) => text.includes(k));
-  }).length;
-  return Math.round((flagged / videos.length) * 100);
+  return Math.round((videos.filter(isSponsoredVideo).length / videos.length) * 100);
 }
 
 /** A coarse public-metadata scan, not a substitute for an actual brand-safety review — flags

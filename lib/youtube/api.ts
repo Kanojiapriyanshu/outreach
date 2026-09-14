@@ -391,6 +391,86 @@ export async function getPublicCommentThreads(
   }
 }
 
+export interface VideoSearchHit {
+  videoId: string;
+  channelId: string;
+  channelTitle: string;
+  title: string;
+  publishedAt: string | null;
+}
+
+export interface SearchVideosOptions {
+  /** 1-50, YouTube's own per-page cap. */
+  maxResults?: number;
+  regionCode?: string;
+  relevanceLanguage?: string;
+  order?: "relevance" | "viewCount" | "date";
+  pageToken?: string;
+}
+
+/** search.list HTML-escapes snippet text while videos.list does not — decoded so a title read from a
+ * search hit matches the same title read later from videos.list. */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * search.list, type=video. Campaign discovery searches videos rather than channels because a
+ * creator's channel name and blurb rarely say "treadmill reviews" even when half their uploads are
+ * exactly that — the videos do. 100 quota units per call regardless of maxResults.
+ */
+export async function searchVideos(
+  query: string,
+  opts: SearchVideosOptions = {}
+): Promise<{ items: VideoSearchHit[]; nextPageToken?: string }> {
+  const data = await youtubeGet("search", {
+    part: "snippet",
+    q: query,
+    type: "video",
+    maxResults: Math.min(Math.max(opts.maxResults ?? 50, 1), 50),
+    regionCode: opts.regionCode,
+    relevanceLanguage: opts.relevanceLanguage,
+    order: opts.order,
+    pageToken: opts.pageToken,
+  });
+
+  const items = ((data.items ?? []) as any[])
+    .map((hit) => ({
+      videoId: hit.id?.videoId ?? "",
+      channelId: hit.snippet?.channelId ?? "",
+      channelTitle: decodeEntities(hit.snippet?.channelTitle ?? ""),
+      title: decodeEntities(hit.snippet?.title ?? ""),
+      publishedAt: hit.snippet?.publishedAt ?? null,
+    }))
+    .filter((hit) => hit.videoId && hit.channelId);
+
+  return { items, nextPageToken: (data as { nextPageToken?: string }).nextPageToken };
+}
+
+/** One page of a channel's uploads playlist (newest first) plus the token for the next page —
+ * getRecentChannelVideoIds only ever returns the first page. 1 quota unit per page. */
+export async function getChannelUploadsPage(
+  uploadPlaylistId: string,
+  pageToken?: string,
+  maxResults = 50
+): Promise<{ videoIds: string[]; nextPageToken?: string }> {
+  if (!uploadPlaylistId) return { videoIds: [] };
+  const data = await youtubeGet("playlistItems", {
+    part: "contentDetails",
+    playlistId: uploadPlaylistId,
+    maxResults: Math.min(Math.max(maxResults, 1), 50),
+    pageToken,
+  });
+  const videoIds: string[] = ((data.items ?? []) as any[]).map((item) => item.contentDetails?.videoId).filter(Boolean);
+  return { videoIds, nextPageToken: (data as { nextPageToken?: string }).nextPageToken };
+}
+
 export async function getRecentChannelVideoIds(uploadPlaylistId: string, limit = 12): Promise<string[]> {
   if (!uploadPlaylistId) return [];
 

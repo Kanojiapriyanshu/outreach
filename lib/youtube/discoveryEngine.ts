@@ -515,7 +515,7 @@ function todayKey(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 
-async function recordUnitsUsed(units: number): Promise<void> {
+export async function recordUnitsUsed(units: number): Promise<void> {
   if (units <= 0) return;
   const date = todayKey();
   await prisma.youtubeApiUsage.upsert({
