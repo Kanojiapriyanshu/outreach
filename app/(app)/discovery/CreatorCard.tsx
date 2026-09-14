@@ -207,7 +207,6 @@ export default function CreatorCard({ creator }: { creator: CreatorCardData }) {
 
       <div className="flex items-center gap-1.5 pt-1">
         <StartOutreachButton
-          disabled={!current.email}
           to={current.email ?? ""}
           contactName={current.title}
           channelName={current.title}

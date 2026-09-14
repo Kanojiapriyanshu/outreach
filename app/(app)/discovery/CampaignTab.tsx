@@ -822,7 +822,6 @@ function CreatorDetail({ creator, niche }: { creator: QualifiedCreator; niche: s
           <h4 className="text-[11px] font-bold uppercase tracking-wide text-[var(--muted-2)]">Actions</h4>
           <div className="flex items-center gap-1.5 flex-wrap">
             <StartOutreachButton
-              disabled={!creator.email}
               to={creator.email ?? ""}
               contactName={creator.title}
               channelName={creator.title}

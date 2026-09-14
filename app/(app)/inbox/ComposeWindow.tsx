@@ -29,6 +29,9 @@ export interface ComposePrefill {
   channelUrl?: string;
   niche?: string;
   subject?: string;
+  /** Set when the caller has no email for this person — a page where the team can look it up
+   * (a creator's YouTube About page). Shown as a hint until something is typed into To. */
+  emailLookupUrl?: string;
 }
 
 export default function ComposeWindow({
@@ -263,6 +266,17 @@ export default function ComposeWindow({
       </div>
 
       <div className="flex-1 overflow-y-auto px-3.5">
+        {initial?.emailLookupUrl && !to.trim() && (
+          <div className="mt-2.5 rounded-lg px-3 py-2 text-xs leading-relaxed" style={{ background: "var(--warn-bg)", color: "var(--warn-fg)" }}>
+            No public email was found in this channel&apos;s description. YouTube keeps most business emails behind the
+            &ldquo;View email address&rdquo; button —{" "}
+            <a href={initial.emailLookupUrl} target="_blank" rel="noopener noreferrer" className="underline font-semibold">
+              open their About page
+            </a>
+            , copy the email, and paste it into To below. It&apos;s saved to this creator once you send.
+          </div>
+        )}
+
         {/* Recipients */}
         <div className="flex items-center gap-2 border-b border-[var(--border)] py-1.5">
           <input

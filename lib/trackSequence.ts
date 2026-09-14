@@ -107,15 +107,17 @@ async function createContact(input: ContactInput) {
     });
   }
   // A creator already saved from Discovery is linked instead of duplicated, so the outreach can
-  // show their channel stats and there stays one Creator row per channel. The saved row itself is
-  // left exactly as Discovery wrote it.
+  // show their channel stats and there stays one Creator row per channel.
   const email = input.contactEmail.toLowerCase();
   const channelUrl = input.creator!.channelUrl?.trim();
   const saved = await prisma.creator.findFirst({
     where: { channelId: { not: null }, OR: [...(channelUrl ? [{ channelUrl }] : []), { email }] },
-    select: { id: true },
+    select: { id: true, email: true },
   });
   if (saved) {
+    // The team usually finds the email on the channel's About page when the description had none —
+    // keep it on the creator so Discovery shows it next time. Never replaces an email already saved.
+    if (!saved.email) await prisma.creator.update({ where: { id: saved.id }, data: { email } });
     return prisma.contact.create({ data: { creatorId: saved.id, name: input.contactName, email } });
   }
 
