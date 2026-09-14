@@ -473,7 +473,17 @@ export default function CampaignTab() {
               </span>
             </div>
             <p>Stopped: {result.stats.stopReason}.</p>
-            {result.stats.minedTerms.length > 0 && <p>Also searched phrases found in results: {result.stats.minedTerms.join(", ")}.</p>}
+            {result.stats.minedTerms.length > 0 && (
+              <p>
+                Related phrases found in results:{" "}
+                {result.stats.minedTerms
+                  .map((term) => (result.stats.queriesRun.some((q) => q.includes(term)) ? `${term} (searched)` : term))
+                  .join(", ")}
+                {result.stats.minedTerms.some((term) => !result.stats.queriesRun.some((q) => q.includes(term)))
+                  ? " — a deeper search runs the rest."
+                  : "."}
+              </p>
+            )}
             {Object.keys(result.stats.notQualified).length > 0 && (
               <p>
                 Filtered out before scoring:{" "}
