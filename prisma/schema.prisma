@@ -725,6 +725,11 @@ model WorkerHeartbeat {
    * the tick, which doesn't work once ticks are short and frequent.
    */
   nextSendAllowedAt DateTime?
+  /**
+   * Claimed by the app when it runs a tick itself because the external worker has gone silent
+   * (see app/api/notifications/route.ts) — keeps several open tabs from all doing it at once.
+   */
+  fallbackTickAt    DateTime?
 }
 
 model AutomationSettings {

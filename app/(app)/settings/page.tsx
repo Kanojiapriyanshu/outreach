@@ -290,7 +290,8 @@ export default function SettingsPage() {
           </div>
         )}
         <p className="text-xs text-[var(--muted-2)]">
-          If this stops updating for a while, ask your technical contact to restart it.
+          It runs around the clock on its own, and while this app is open in any tab it also covers any gap itself.
+          If this stays red for more than 15 minutes, ask your technical contact to check it.
         </p>
       </section>
 

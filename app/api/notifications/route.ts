@@ -1,5 +1,34 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { runTickWithHeartbeat } from "@/lib/workerTick";
+
+// The fallback tick below runs after the response is sent, within this route's time limit — the
+// same budget the cron tick route has.
+export const maxDuration = 60;
+
+// The external worker ticks every 30s; this much silence means it isn't running right now.
+const WORKER_SILENT_MS = 90_000;
+// However many tabs are polling, at most one fallback tick starts in this window.
+const FALLBACK_MIN_GAP_MS = 45_000;
+
+/**
+ * Backstop for the external worker (the GitHub Actions chain in .github/workflows/worker-cron.yml):
+ * every open copy of the app polls this route every 30s, so when the worker has gone silent the app
+ * runs a tick itself and scheduled emails still go out on time. The claim is atomic, so several
+ * tabs or people never start ticks together — and ticks are safe to overlap with the real worker
+ * anyway, since every send is claimed before it happens.
+ */
+async function claimFallbackTick(): Promise<boolean> {
+  const now = Date.now();
+  const claimed = await prisma.workerHeartbeat.updateMany({
+    where: {
+      lastRunAt: { lt: new Date(now - WORKER_SILENT_MS) },
+      OR: [{ fallbackTickAt: null }, { fallbackTickAt: { lt: new Date(now - FALLBACK_MIN_GAP_MS) } }],
+    },
+    data: { fallbackTickAt: new Date(now) },
+  });
+  return claimed.count > 0;
+}
 
 // Sequence events worth interrupting someone for. Routine bookkeeping (FOLLOW_UP_SCHEDULED,
 // NO_REPLY_FOUND, REPLY_CHECK_PERFORMED, STAGE_CHANGED, etc.) stays in the full History log but
@@ -20,6 +49,18 @@ const HIGH_SIGNAL_EVENTS = ["UNSUBSCRIBE_DETECTED", "BOUNCE_DETECTED"] as const;
  * inbox conversations — nothing arrives to be read, but they absolutely need eyes.
  */
 export async function GET(req: NextRequest) {
+  try {
+    if (await claimFallbackTick()) {
+      after(async () => {
+        const result = await runTickWithHeartbeat();
+        if (!result.ok) console.error("[worker fallback] tick failed:", result.error);
+      });
+    }
+  } catch (err) {
+    // The notification feed must keep working even if the backstop check can't run.
+    console.error("[worker fallback] couldn't check the worker:", err);
+  }
+
   const since = req.nextUrl.searchParams.get("since");
   const sinceDate = since ? new Date(since) : null;
   const validSince = sinceDate && !isNaN(sinceDate.getTime()) ? sinceDate : null;
