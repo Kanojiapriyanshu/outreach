@@ -17,6 +17,7 @@ import {
   primaryRate,
   type CreatorReplyAnalysis,
 } from "@/lib/creatorReplyAnalysis";
+import { requestCreatorMediaKit, syncCreatorRateFromSequence } from "@/lib/creatorProfileSync";
 import type { gmail_v1 } from "googleapis";
 import { renderTemplate } from "@/lib/templates";
 import { advanceState, MAX_FOLLOW_UPS, type SequenceState } from "@/lib/stateMachine";
@@ -239,6 +240,17 @@ async function handleCreatorReply(
           }),
         ];
 
+  // Anyone who writes back (short of opting out) is worth a media kit on file for future brand
+  // pitches, and a quoted rate belongs on their roster row. Neither may break reply handling.
+  const updateCreatorProfile = async (rateShared: boolean) => {
+    try {
+      if (rateShared) await syncCreatorRateFromSequence(seq.id);
+      await requestCreatorMediaKit(seq.id);
+    } catch (err) {
+      console.error(`[creator reply] couldn't update the creator profile for sequence ${seq.id}:`, err);
+    }
+  };
+
   if (analysis.intent === "OPT_OUT") {
     if (!(await claimSequence(seq, { ...common, status: "UNSUBSCRIBED", stage: "NOT_INTERESTED", awaitingResponseSince: null }))) {
       return notClaimed;
@@ -273,6 +285,7 @@ async function handleCreatorReply(
       }),
       ...stageLog("NOT_INTERESTED"),
     ]);
+    await updateCreatorProfile(false);
     return { terminal: true, status: "REPLIED" };
   }
 
@@ -302,6 +315,7 @@ async function handleCreatorReply(
         },
       }),
     ]);
+    await updateCreatorProfile(false);
     return { terminal: false, manualSendDetected: false, rescheduled: true };
   }
 
@@ -351,6 +365,7 @@ async function handleCreatorReply(
     }),
     ...stageLog(stage),
   ]);
+  await updateCreatorProfile(analysis.intent === "RATE_SHARED" && analysis.rates.length > 0);
   return { terminal: true, status: "REPLIED" };
 }
 
@@ -1031,6 +1046,11 @@ const CLAIM_STALE_MS = 5 * 60 * 1000;
 const REPLY_CHECK_INTERVAL_MS = 2 * 60 * 1000;
 const INBOX_SCAN_INTERVAL_MS = 2 * 60 * 1000;
 
+// Enrichment only starts if the tick is still young, and stops well before the route's 60s limit.
+const ENRICHMENT_START_CUTOFF_MS = 25_000;
+const ENRICHMENT_BUDGET_MS = 20_000;
+const TICK_SOFT_LIMIT_MS = 45_000;
+
 /** Single-row table holding the worker's cross-tick state (last-run stamps, send spacing). */
 async function getWorkerState() {
   const existing = await prisma.workerHeartbeat.findFirst();
@@ -1156,6 +1176,7 @@ export async function runDueInitialEmails() {
  * scripts/worker.ts calls on each poll.
  */
 export async function runWorkerTick() {
+  const tickStartedAt = Date.now();
   const initialEmailResults = await runDueInitialEmails();
   const actionResults = await runDueScheduledActions();
 
@@ -1191,7 +1212,22 @@ export async function runWorkerTick() {
     }
   }
 
+  // Creator enrichment (email lookups, queued media kits) gets whatever time is left, last — it's
+  // background housekeeping and must never delay a send. Loaded lazily: it pulls in the YouTube
+  // client, which nothing else in a tick needs.
+  let enrichment: { mediaKits: number; emailLookups: number; emailsFound: number } | null = null;
+  const elapsed = Date.now() - tickStartedAt;
+  if (elapsed < ENRICHMENT_START_CUTOFF_MS) {
+    try {
+      const { runCreatorEnrichmentPass } = await import("@/lib/creatorEnrichment");
+      enrichment = await runCreatorEnrichmentPass(Math.min(ENRICHMENT_BUDGET_MS, TICK_SOFT_LIMIT_MS - elapsed));
+    } catch (err) {
+      console.error("[creator enrichment] pass failed:", err);
+    }
+  }
+
   return {
+    enrichment,
     repliesFound: replyResults.length,
     initialEmailsSent: initialEmailResults.length,
     actionsProcessed: actionResults.length,

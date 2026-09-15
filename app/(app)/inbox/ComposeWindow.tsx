@@ -32,6 +32,8 @@ export interface ComposePrefill {
   /** Set when the caller has no email for this person — a page where the team can look it up
    * (a creator's YouTube About page). Shown as a hint until something is typed into To. */
   emailLookupUrl?: string;
+  /** A creator's channel link — the influencer Email 1 is filled in from that channel on open. */
+  personalizeChannelUrl?: string;
 }
 
 export default function ComposeWindow({
@@ -83,6 +85,47 @@ export default function ComposeWindow({
     return () => clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [to, subject, html, classificationOverride]);
+
+  // Opened for a creator: write Email 1 from their channel instead of starting blank. Only fills
+  // what the team hasn't touched yet, so typing while it loads is never overwritten.
+  const [personalizing, setPersonalizing] = useState(!!initial?.personalizeChannelUrl);
+  const [personalizeNote, setPersonalizeNote] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  useEffect(() => {
+    const channelUrl = initial?.personalizeChannelUrl;
+    if (!channelUrl) return;
+    let cancelled = false;
+    fetch("/api/influencers/personalize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channelUrl }),
+    })
+      .then(async (res) => ({ ok: res.ok, data: await res.json() }))
+      .then(({ ok, data }) => {
+        if (cancelled) return;
+        if (!ok) throw new Error(data.error ?? "Couldn't read their channel");
+        const draft = data.draft as { subject: string; body: string; email: string | null; topics: { phrase: string }[] };
+        setSubject((prev) => (prev === (initial?.subject ?? "") ? draft.subject : prev));
+        setHtml((prev) => (prev.replace(/<[^>]*>/g, "").trim() ? prev : templateToHtml(draft.body)));
+        if (draft.email) setTo((prev) => (prev.trim() ? prev : draft.email!));
+        setPersonalizeNote({
+          tone: "ok",
+          text:
+            draft.topics.length > 0
+              ? `Filled in from their recent uploads (${draft.topics.map((t) => t.phrase).join(", ")}) — edit anything before sending.`
+              : "Filled in from their channel — no clear recurring topic, so check the highlighted phrase.",
+        });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setPersonalizeNote({ tone: "error", text: `${err instanceof Error ? err.message : "Couldn't read their channel"} — load the template below instead.` });
+      })
+      .finally(() => {
+        if (!cancelled) setPersonalizing(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once for the channel this window opened with
+  }, []);
 
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -329,6 +372,15 @@ export default function ComposeWindow({
 
         {/* Templates — the CRM already has the team's approved copy, so composing from it beats
             retyping it or pasting from somewhere else. */}
+        {(personalizing || personalizeNote) && (
+          <p
+            className="pt-2 text-xs flex items-center gap-1.5"
+            style={{ color: personalizeNote?.tone === "error" ? "var(--danger-fg)" : "var(--muted)" }}
+          >
+            {personalizing ? "Writing this from their channel…" : personalizeNote?.text}
+          </p>
+        )}
+
         <div className="py-2">
           <TemplatePicker
             onApply={(t) => {

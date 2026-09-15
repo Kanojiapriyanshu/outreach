@@ -186,6 +186,7 @@ enum ActivityEventType {
   FOLLOW_UP_CANCELLED
   RATE_DETECTED
   REPLY_HANDLED
+  MEDIA_KIT_READY
 }
 
 model User {
@@ -400,10 +401,51 @@ model Creator {
   audienceGenderSplit Json @default("[]")
   audienceDevices     Json @default("[]")
 
+  // --- Influencer roster: what the outreach side keeps about a creator so they never have to be
+  // looked up again. ---
+  /**
+   * Where `email` came from, shown next to it: "Channel description", a page like
+   * "linktr.ee/handle" or "janedoe.com/contact", "Entered by hand".
+   */
+  emailSource         String?
+  /**
+   * When the automatic lookup last ran for this creator — set whether or not it found anything,
+   * so the background pass doesn't re-fetch the same pages every tick.
+   */
+  emailCheckedAt      DateTime?
+  /**
+   * Websites and link-in-bio pages the creator published (description, or linked from those).
+   */
+  websiteLinks        String[]  @default([])
+  /**
+   * "midlife lifestyle, home styling, and affordable upgrade content" — read from their recent
+   * video titles for the influencer Email 1, then editable. Reused until it's stale.
+   */
+  contentHighlights   String?
+  contentHighlightsAt DateTime?
+  /**
+   * The latest media kit made for this creator and its public share token. Made automatically
+   * when they reply to outreach (mediaKitRequestedAt queues it for the worker) or on demand.
+   */
+  mediaKitId          String?
+  mediaKitShareToken  String?
+  mediaKitGeneratedAt DateTime?
+  mediaKitRequestedAt DateTime?
+  /**
+   * Their most recent quoted rate, copied from whichever outreach thread recorded it (or entered
+   * by hand), so the roster shows a price per creator without digging through threads.
+   */
+  quotedRateAmount      Float?
+  quotedRateCurrency    String?
+  quotedRateDeliverable String?
+  quotedRateAt          DateTime?
+
   contacts Contact[]
 
   @@index([subscriberCount])
   @@index([lastDiscoveredAt])
+  @@index([mediaKitRequestedAt])
+  @@index([emailCheckedAt])
 }
 
 model Contact {

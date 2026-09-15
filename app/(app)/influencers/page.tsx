@@ -17,6 +17,7 @@ import {
 import type { Prisma } from "@/app/generated/prisma/client";
 import InfluencerSearch from "./InfluencerSearch";
 import MarkHandledButton from "./MarkHandledButton";
+import InfluencerTabs from "./InfluencerTabs";
 
 // Reply and follow-up state changes every worker tick — never serve a cached copy.
 export const dynamic = "force-dynamic";
@@ -100,6 +101,8 @@ export default async function InfluencerOutreachPage({
           </Link>
         </div>
       </div>
+
+      <InfluencerTabs active="outreach" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard label="Creators contacted" value={total} href="/influencers" />

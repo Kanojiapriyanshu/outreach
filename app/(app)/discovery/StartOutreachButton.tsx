@@ -58,6 +58,7 @@ export default function StartOutreachButton({
             classification: { outreachType: "CREATOR" },
             subject: `Collab opportunity — ${channelName}`,
             emailLookupUrl: to ? undefined : aboutPageUrl(channelUrl),
+            personalizeChannelUrl: channelUrl,
           }}
         />
       )}

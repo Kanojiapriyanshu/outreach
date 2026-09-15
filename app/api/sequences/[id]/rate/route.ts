@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { formatRate, mergeRates, parseStoredRates, primaryRate, type QuotedRate } from "@/lib/creatorReplyAnalysis";
+import { syncCreatorRateFromSequence } from "@/lib/creatorProfileSync";
 
 const CURRENCIES = new Set(["USD", "EUR", "GBP", "INR", "CAD", "AUD"]);
 const MAX_RATE = 10_000_000;
@@ -52,6 +53,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         data: { sequenceId: id, eventType: "RATE_DETECTED", description: "Cleared the recorded rate." },
       }),
     ]);
+    await syncCreatorRateFromSequence(id);
     return NextResponse.json({ ok: true });
   }
 
@@ -111,6 +113,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         ]
       : []),
   ]);
+  await syncCreatorRateFromSequence(id);
 
   return NextResponse.json({ ok: true });
 }

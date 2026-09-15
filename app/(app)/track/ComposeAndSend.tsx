@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Send, RotateCcw, Trash2, FileText } from "lucide-react";
+import { Send, RotateCcw, Trash2, FileText, Sparkles } from "lucide-react";
 import { CREATOR_VARIABLES, renderTemplate } from "@/lib/templates";
 import { variableLabel } from "@/lib/friendlyLabels";
 import BrandDetailsForm, { EMPTY_BRAND_DETAILS, type BrandDetails } from "./BrandDetailsForm";
@@ -221,7 +221,12 @@ export default function ComposeAndSend({
           Key_Product_Features: draft.variables.Key_Product_Features ?? "{Key_Product_Features}",
           Target_Audience_Or_Angle: draft.variables.Target_Audience_Or_Angle ?? "{Target_Audience_Or_Angle}",
         }
-      : { ...draft.variables, Contact_Name: draft.creatorName || "{Contact_Name}" };
+      : {
+          ...draft.variables,
+          Contact_Name: draft.creatorName || "{Contact_Name}",
+          // The subject uses {Creator_Name}; without this it went out literally.
+          Creator_Name: draft.channelName || draft.creatorName || "{Creator_Name}",
+        };
   const renderedSubject = template ? renderTemplate(template.subject, renderedVars) : "";
   const renderedBody = template ? renderTemplate(template.body, renderedVars) : "";
 
@@ -234,6 +239,49 @@ export default function ComposeAndSend({
 
   function resetToTemplate() {
     setDraft((prev) => ({ ...prev, contentTouched: false }));
+  }
+
+  const [filling, setFilling] = useState(false);
+  const [fillNote, setFillNote] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+
+  /** Reads the creator's channel and fills the Email 1 fields; campaign fields already typed are kept. */
+  async function fillFromChannel() {
+    setFilling(true);
+    setFillNote(null);
+    try {
+      const res = await fetch("/api/influencers/personalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channelUrl: draft.channelUrl.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Couldn't read that channel");
+      const d = data.draft as { name: string; email: string | null; variables: Record<string, string>; topics: { phrase: string }[] };
+      setDraft((prev) => ({
+        ...prev,
+        creatorName: prev.creatorName || d.name,
+        channelName: prev.channelName || d.name,
+        contactEmail: prev.contactEmail || d.email || "",
+        variables: {
+          ...prev.variables,
+          Content_Highlights: d.variables.Content_Highlights,
+          Niche_Or_Product_Category: prev.variables.Niche_Or_Product_Category || d.variables.Niche_Or_Product_Category,
+          Deliverable_Type: prev.variables.Deliverable_Type || d.variables.Deliverable_Type,
+        },
+        contentTouched: false,
+      }));
+      setFillNote({
+        tone: "ok",
+        text:
+          d.topics.length > 0
+            ? `Filled from their recent uploads: ${d.topics.map((t) => t.phrase).join(", ")}. Edit anything below.`
+            : "Filled in — no clear recurring topic in their uploads, so check the highlights.",
+      });
+    } catch (e) {
+      setFillNote({ tone: "error", text: e instanceof Error ? e.message : "Couldn't read that channel" });
+    } finally {
+      setFilling(false);
+    }
   }
 
   async function send() {
@@ -366,6 +414,22 @@ export default function ComposeAndSend({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <TextField label="Channel name (optional)" value={draft.channelName} onChange={(v) => update("channelName", v)} />
               <TextField label="Channel link (optional)" value={draft.channelUrl} onChange={(v) => update("channelUrl", v)} />
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => void fillFromChannel()}
+                disabled={!draft.channelUrl.trim() || filling}
+                className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs disabled:opacity-40"
+                title="Paste their YouTube channel link above first"
+              >
+                <Sparkles size={13} /> {filling ? "Reading their channel…" : "Fill in from their channel"}
+              </button>
+              {fillNote && (
+                <span className="text-xs" style={{ color: fillNote.tone === "error" ? "var(--danger-fg)" : "var(--muted)" }}>
+                  {fillNote.text}
+                </span>
+              )}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {CREATOR_VARIABLES.filter((k) => k !== "Creator_Name").map((key) => (
