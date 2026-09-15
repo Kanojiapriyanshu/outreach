@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { RotateCw } from "lucide-react";
 import Badge from "@/app/components/Badge";
 
 interface EmailAccount {
@@ -71,6 +72,29 @@ export default function SettingsPage() {
   const [newMember, setNewMember] = useState({ name: "", email: "", password: "" });
   const [teamError, setTeamError] = useState<string | null>(null);
   const [addingMember, setAddingMember] = useState(false);
+  const [runningNow, setRunningNow] = useState(false);
+  const [runResult, setRunResult] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+
+  /** Runs one automation cycle right away — for when the status has gone red. */
+  async function runAutomationNow() {
+    setRunningNow(true);
+    setRunResult(null);
+    try {
+      const res = await fetch("/api/worker/run", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "The automation couldn't run — try again in a minute.");
+      const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+      setRunResult({
+        tone: "ok",
+        text: `Ran just now — ${plural(data.initialEmailsSent + data.followUpsProcessed, "due email", "due emails")} handled, ${plural(data.repliesFound, "reply", "replies")} found, ${plural(data.newMailFound, "conversation", "conversations")} synced.`,
+      });
+    } catch (e) {
+      setRunResult({ tone: "error", text: e instanceof Error ? e.message : "The automation couldn't run — try again in a minute." });
+    } finally {
+      setRunningNow(false);
+      await load();
+    }
+  }
 
   async function load() {
     const res = await fetch("/api/settings");
@@ -289,9 +313,25 @@ export default function SettingsPage() {
             )}
           </div>
         )}
+        <div className="flex items-center gap-3 flex-wrap pt-1">
+          <button
+            onClick={() => void runAutomationNow()}
+            disabled={runningNow}
+            className="btn-primary inline-flex items-center gap-1.5 px-4 py-2 text-sm disabled:opacity-60"
+          >
+            <RotateCw size={14} className={runningNow ? "animate-spin" : undefined} />
+            {runningNow ? "Running… (can take up to a minute)" : "Run automation now"}
+          </button>
+          {runResult && (
+            <span className="text-sm" style={{ color: runResult.tone === "error" ? "var(--danger-fg)" : "var(--success-fg)" }}>
+              {runResult.text}
+            </span>
+          )}
+        </div>
         <p className="text-xs text-[var(--muted-2)]">
-          It runs around the clock on its own, and while this app is open in any tab it also covers any gap itself.
-          If this stays red for more than 15 minutes, ask your technical contact to check it.
+          It runs around the clock on its own, and while this app is open in any tab it also covers any gap itself. If
+          the dot is red, press Run automation now — it sends anything due and checks for replies straight away. Safe
+          to press any time; nothing is ever sent twice.
         </p>
       </section>
 
