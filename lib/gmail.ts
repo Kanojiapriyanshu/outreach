@@ -1,6 +1,7 @@
 import { google } from "googleapis";
 import type { gmail_v1 } from "googleapis";
 import { prisma } from "@/lib/prisma";
+import { repairMojibake } from "@/lib/textEncoding";
 
 // gmail.modify covers send + read *and* label changes, which is what makes the in-app inbox a
 // real inbox rather than a read-only mirror: marking something read here marks it read in Gmail,
@@ -71,7 +72,9 @@ export async function gmailClientFor(emailAccountId: string): Promise<gmail_v1.G
 }
 
 function decodeHeaderValue(headers: gmail_v1.Schema$MessagePartHeader[] | undefined, name: string) {
-  return headers?.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? "";
+  // A message sent with raw UTF-8 in its headers comes back from Gmail already mis-decoded
+  // ("Ã—" for "×"); repaired here so the inbox shows it correctly and a reply can't garble it again.
+  return repairMojibake(headers?.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? "");
 }
 
 export interface ThreadSummary {
@@ -465,7 +468,9 @@ export async function sendRichEmail(
     `To: ${params.to}`,
     ...(params.cc ? [`Cc: ${params.cc}`] : []),
     ...(params.bcc ? [`Bcc: ${params.bcc}`] : []),
-    `Subject: ${params.subject}`,
+    // Encoded like the template sends below — this compose/reply path used to put raw UTF-8 here,
+    // which is what turned "×" and "—" in brand and creator subjects into "Ã—" and "â€”".
+    `Subject: ${encodeSubject(params.subject)}`,
     ...(params.inReplyToMessageId ? [`In-Reply-To: ${params.inReplyToMessageId}`] : []),
     ...(params.inReplyToMessageId ? [`References: ${params.references || params.inReplyToMessageId}`] : []),
     "MIME-Version: 1.0",
@@ -555,6 +560,11 @@ function encodeHeaderValue(value: string): string {
   return `=?UTF-8?B?${Buffer.from(value, "utf-8").toString("base64")}?=`;
 }
 
+/** Subjects are repaired first — one copied from an already-garbled thread goes out correct. */
+function encodeSubject(subject: string): string {
+  return encodeHeaderValue(repairMojibake(subject));
+}
+
 /**
  * RFC 5322 requires CRLF line endings throughout the whole message. The headers were joined with
  * "\r\n" but the body text (JS template literals only ever produce bare "\n") wasn't normalized to
@@ -633,7 +643,7 @@ export async function sendInitialEmail(
   params: { to: string; subject: string; body: string; fromEmail: string }
 ) {
   const raw = buildMultipartRaw(
-    [`From: ${params.fromEmail}`, `To: ${params.to}`, `Subject: ${encodeHeaderValue(params.subject)}`],
+    [`From: ${params.fromEmail}`, `To: ${params.to}`, `Subject: ${encodeSubject(params.subject)}`],
     params.body
   );
 
@@ -662,7 +672,7 @@ export async function sendFollowUpEmail(
     [
       `From: ${params.fromEmail}`,
       `To: ${params.to}`,
-      `Subject: ${encodeHeaderValue(params.subject)}`,
+      `Subject: ${encodeSubject(params.subject)}`,
       `In-Reply-To: ${params.inReplyToRfc822MessageId}`,
       `References: ${params.references}`,
     ],

@@ -21,7 +21,7 @@ import { requestCreatorMediaKit, syncCreatorRateFromSequence } from "@/lib/creat
 import type { gmail_v1 } from "googleapis";
 import { renderTemplate } from "@/lib/templates";
 import { advanceState, MAX_FOLLOW_UPS, type SequenceState } from "@/lib/stateMachine";
-import { addBusinessDays, addCalendarDays, clampToSendingWindow, pickRandomSendTime } from "@/lib/businessDays";
+import { addBusinessDays, addCalendarDays, clampToSendingWindow, pickRandomSendTime, sendingWindowFor } from "@/lib/businessDays";
 import { isUnderDailyLimit } from "@/lib/quota";
 import { classifyReply } from "@/lib/replyClassifier";
 import { renderNudge, maxStepsForNudge, type NudgeKind } from "@/lib/genericNudgeTemplates";
@@ -91,12 +91,10 @@ export function computeNextScheduledAt(outreachType: "BRAND" | "CREATOR", step: 
   // reuses the same gap as step 3, so it lands at the same "regular interval" as the nudges
   // before it instead of needing its own setting.
   const delayIndex = Math.min(step, 3);
-  const delayDays =
-    outreachType === "BRAND"
-      ? [0, settings.brandDelayDays1, settings.brandDelayDays2, settings.brandDelayDays3][delayIndex]
-      : [0, settings.creatorDelayDays1, settings.creatorDelayDays2, settings.creatorDelayDays3][delayIndex];
-  const target = outreachType === "BRAND" ? addBusinessDays(new Date(), delayDays) : addCalendarDays(new Date(), delayDays);
-  return pickRandomSendTime(target, settings);
+  // Influencer follow-ups use exactly the brand gaps (working days); only the time of day differs —
+  // they're timed into the influencer window (evenings IST by default).
+  const delayDays = [0, settings.brandDelayDays1, settings.brandDelayDays2, settings.brandDelayDays3][delayIndex];
+  return pickRandomSendTime(addBusinessDays(new Date(), delayDays), sendingWindowFor(outreachType, settings));
 }
 
 /**
@@ -294,7 +292,7 @@ async function handleCreatorReply(
       return notClaimed;
     }
     const settings = await prisma.automationSettings.findFirstOrThrow();
-    const scheduledAt = pickRandomSendTime(addCalendarDays(new Date(), settings.nonCommittalDelayDays), settings);
+    const scheduledAt = pickRandomSendTime(addBusinessDays(new Date(), settings.nonCommittalDelayDays), sendingWindowFor("CREATOR", settings));
     await prisma.$transaction([
       cancelPending(),
       prisma.scheduledAction.create({
@@ -386,11 +384,10 @@ async function handleNonCommittalReply(seq: SequenceWithContact, from: string, n
   if (!claimed) return;
 
   const settings = await prisma.automationSettings.findFirstOrThrow();
-  const target =
-    seq.outreachType === "BRAND"
-      ? addBusinessDays(new Date(), settings.nonCommittalDelayDays)
-      : addCalendarDays(new Date(), settings.nonCommittalDelayDays);
-  const scheduledAt = pickRandomSendTime(target, settings);
+  const scheduledAt = pickRandomSendTime(
+    addBusinessDays(new Date(), settings.nonCommittalDelayDays),
+    sendingWindowFor(seq.outreachType, settings)
+  );
 
   await prisma.$transaction([
     prisma.scheduledAction.updateMany({
@@ -896,7 +893,8 @@ async function processScheduledActionClaimed(
   // --- Sending window check ---
   const settings = await prisma.automationSettings.findFirstOrThrow();
   const now = new Date();
-  const clamped = clampToSendingWindow(now, settings);
+  const sendWindow = sendingWindowFor(seq.outreachType, settings);
+  const clamped = clampToSendingWindow(now, sendWindow);
   // A time a human picked by hand is a decision, not a suggestion — the window exists to keep the
   // *automatic* cadence inside business hours, so it must not quietly move an explicitly chosen
   // send to some other time.
@@ -909,7 +907,7 @@ async function processScheduledActionClaimed(
   // --- Daily sending-quota protection (avoid tripping Gmail's spam/quota flags) ---
   const underLimit = await isUnderDailyLimit(seq.emailAccountId, seq.emailAccount.dailySendLimit);
   if (!underLimit) {
-    const tomorrow = clampToSendingWindow(addCalendarDays(new Date(), 1), settings);
+    const tomorrow = clampToSendingWindow(addCalendarDays(new Date(), 1), sendWindow);
     await prisma.scheduledAction.update({ where: { id: action.id }, data: { scheduledAt: tomorrow } });
     await prisma.activityLog.create({
       data: {

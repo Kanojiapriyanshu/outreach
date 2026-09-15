@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { addBusinessDays, addCalendarDays, clampToSendingWindow, isWithinSendingWindow } from "../businessDays";
+import { addBusinessDays, addCalendarDays, clampToSendingWindow, isWithinSendingWindow, pickRandomSendTime, sendingWindowFor } from "../businessDays";
 
 const WINDOW = {
   sendWindowStartHour: 9,
@@ -78,5 +78,39 @@ describe("clampToSendingWindow / isWithinSendingWindow", () => {
     };
     expect(isWithinSendingWindow(utcInstant, istWindow)).toBe(true);
     expect(clampToSendingWindow(utcInstant, istWindow).getTime()).toBe(utcInstant.getTime());
+  });
+});
+
+describe("sendingWindowFor", () => {
+  const settings = {
+    sendWindowStartHour: 9,
+    sendWindowStartMinute: 30,
+    sendWindowEndHour: 12,
+    sendWindowEndMinute: 0,
+    sendWindowDays: "MON,TUE,WED,THU,FRI",
+    creatorSendWindowStartHour: 20,
+    creatorSendWindowStartMinute: 0,
+    creatorSendWindowEndHour: 22,
+    creatorSendWindowEndMinute: 0,
+  };
+  const creator = sendingWindowFor("CREATOR", settings);
+  const brand = sendingWindowFor("BRAND", settings);
+
+  it("times influencer sends into the evening window and brand sends into the morning one", () => {
+    const mondayNoonish = ist("2026-09-07T11:00:00");
+    expect(isWithinSendingWindow(mondayNoonish, brand)).toBe(true);
+    expect(isWithinSendingWindow(mondayNoonish, creator)).toBe(false);
+    expect(clampToSendingWindow(mondayNoonish, creator).getTime()).toBe(ist("2026-09-07T20:00:00").getTime());
+  });
+
+  it("moves an influencer send after 10pm to the next working day at 8pm", () => {
+    const fridayLate = ist("2026-09-11T22:30:00");
+    expect(clampToSendingWindow(fridayLate, creator).getTime()).toBe(ist("2026-09-14T20:00:00").getTime());
+  });
+
+  it("always picks an influencer time between 8pm and 10pm IST", () => {
+    for (let i = 0; i < 50; i++) {
+      expect(isWithinSendingWindow(pickRandomSendTime(ist("2026-09-08T09:00:00"), creator), creator)).toBe(true);
+    }
   });
 });

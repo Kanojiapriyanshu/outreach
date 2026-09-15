@@ -64,12 +64,42 @@ export function addCalendarDays(start: Date, days: number): Date {
   return fromIstParts(next.getUTCFullYear(), next.getUTCMonth(), next.getUTCDate(), p.hours, p.minutes);
 }
 
-interface SendingWindow {
+export interface SendingWindow {
   sendWindowStartHour: number;
   sendWindowStartMinute: number;
   sendWindowEndHour: number;
   sendWindowEndMinute: number;
   sendWindowDays: string; // e.g. "MON,TUE,WED,THU,FRI"
+}
+
+export interface TrackSendingWindows extends SendingWindow {
+  creatorSendWindowStartHour: number;
+  creatorSendWindowStartMinute: number;
+  creatorSendWindowEndHour: number;
+  creatorSendWindowEndMinute: number;
+}
+
+/**
+ * The window a given track's sends are timed into. Influencer emails have their own hours (evenings
+ * IST by default); the allowed weekdays are shared with the brand track.
+ */
+export function sendingWindowFor(outreachType: "BRAND" | "CREATOR", settings: TrackSendingWindows): SendingWindow {
+  if (outreachType === "CREATOR") {
+    return {
+      sendWindowStartHour: settings.creatorSendWindowStartHour,
+      sendWindowStartMinute: settings.creatorSendWindowStartMinute,
+      sendWindowEndHour: settings.creatorSendWindowEndHour,
+      sendWindowEndMinute: settings.creatorSendWindowEndMinute,
+      sendWindowDays: settings.sendWindowDays,
+    };
+  }
+  return {
+    sendWindowStartHour: settings.sendWindowStartHour,
+    sendWindowStartMinute: settings.sendWindowStartMinute,
+    sendWindowEndHour: settings.sendWindowEndHour,
+    sendWindowEndMinute: settings.sendWindowEndMinute,
+    sendWindowDays: settings.sendWindowDays,
+  };
 }
 
 function windowStartMinutes(window: SendingWindow): number {

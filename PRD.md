@@ -297,7 +297,7 @@ GET/POST /api/team                                    — team member management
 
 ## 14. Influencer outreach track (`outreachType: CREATOR`)
 
-Same machinery as the brand track — Email 1, follow-ups 1/2/3 on the creator cadence, the sending window, quotas, threading — with its own reply handling, because an influencer is asked for a **rate**, not whether they want a creator list.
+Same machinery as the brand track — Email 1, follow-ups 1/2/3 on the same working-day gaps as brands, quotas, threading — with its own reply handling, because an influencer is asked for a **rate**, not whether they want a creator list.
 
 - **Templates:** Email 1 is the team's own influencer pitch (`lib/defaultTemplates.ts`) with `{Content_Highlights}`, `{Niche_Or_Product_Category}` and `{Deliverable_Type}` as the campaign-specific phrases; follow-ups are written from it. Edited on `/templates` like any other.
 - **Reading replies:** `checkThreadForTerminalEvent()` sends creator threads to `handleCreatorReply()` instead of the brand classifier. Consecutive replies (up to the team's own next message) are read together from the **full message body** (`getThreadFullText`), not the snippet. `lib/creatorReplyAnalysis.ts` is the rule-based reader (rates, currencies, ranges, deliverables, intent); `lib/creatorReplyAI.ts` layers the model on top when `ANTHROPIC_API_KEY` is set, and only keeps amounts written in the reply and currencies the reply signals.
@@ -316,6 +316,9 @@ Same machinery as the brand track — Email 1, follow-ups 1/2/3 on the creator c
 - **The team replying** (in Gmail or the in-app inbox) clears the highlight, keeps the stage, and schedules `CREATOR_NUDGE` check-ins (creator-voiced copy in `lib/genericNudgeTemplates.ts`) instead of the brand's creator-list nudge.
 - **Rates:** `quotedRates` holds every price (`{amount, amountMax, currency, deliverable, raw, source}`); a later quote replaces only the same deliverable. `quotedRateAmount`/`quotedRateCurrency` lift the headline (dedicated-video) price. A currency is never assumed. The team can record or correct a rate by hand (`PUT /api/sequences/[id]/rate`).
 - **UI:** `/influencers` — contacted/replied/needs-reply/rates/following-up/no-reply/declined/bounced counts, "first replied after" breakdown, filters, search, CSV export (`GET /api/influencers/export`, formula-injection safe). The sequence page shows the reply, rates and a rate editor; `POST /api/sequences/[id]/handled` clears the highlight for a reply dealt with elsewhere. Creator stages settable by hand: Interested, Rate Received, Negotiation, Selected for the campaign, Deal, Not Interested (the last two also cancel queued follow-ups).
+
+- **Timing:** influencer follow-ups, check-ins and bulk pitches are timed into their own window, `AutomationSettings.creatorSendWindow*` (default 20:00–22:00 IST), via `sendingWindowFor()` in `lib/businessDays.ts`; gaps are the brand working-day gaps (`creatorDelayDays*` are no longer used).
+- **Subjects:** every send path RFC 2047-encodes the subject (`encodeSubject` in `lib/gmail.ts`); `repairMojibake()` (`lib/textEncoding.ts`) fixes headers Gmail returns already mis-decoded, so a reply can't re-garble "×"/"—".
 
 ### 14.1 Creator roster, auto-filled pitches, email lookup, media kits
 

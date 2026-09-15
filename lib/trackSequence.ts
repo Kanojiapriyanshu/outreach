@@ -3,7 +3,7 @@ import { renderTemplate, variablesForType } from "@/lib/templates";
 import { gmailClientFor, sendInitialEmail, sendRichEmail, htmlToPlainText, type OutgoingAttachment } from "@/lib/gmail";
 import { isUnderDailyLimit } from "@/lib/quota";
 import { computeNextScheduledAt } from "@/lib/scheduler";
-import { addCalendarDays, clampToSendingWindow } from "@/lib/businessDays";
+import { addCalendarDays, clampToSendingWindow, sendingWindowFor } from "@/lib/businessDays";
 import { MAX_FOLLOW_UPS, type SequenceStatus } from "@/lib/stateMachine";
 import { formatDateTime } from "@/lib/formatDate";
 
@@ -512,7 +512,7 @@ async function sendClaimedInitialEmail(scheduledId: string) {
     const underLimit = await isUnderDailyLimit(emailAccount.id, emailAccount.dailySendLimit);
     if (!underLimit) {
       const settings = await prisma.automationSettings.findFirstOrThrow();
-      const tomorrow = clampToSendingWindow(addCalendarDays(new Date(), 1), settings);
+      const tomorrow = clampToSendingWindow(addCalendarDays(new Date(), 1), sendingWindowFor(payload.outreachType, settings));
       await prisma.scheduledInitialEmail.update({ where: { id: scheduled.id }, data: { scheduledAt: tomorrow } });
       return { skipped: true, reason: `Daily send limit reached for ${emailAccount.email}; rescheduled to ${formatDateTime(tomorrow)}` };
     }

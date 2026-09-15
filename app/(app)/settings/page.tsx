@@ -35,6 +35,10 @@ interface AutomationSettings {
   sendWindowEndHour: number;
   sendWindowEndMinute: number;
   sendWindowDays: string;
+  creatorSendWindowStartHour: number;
+  creatorSendWindowStartMinute: number;
+  creatorSendWindowEndHour: number;
+  creatorSendWindowEndMinute: number;
   sendSpacingSecondsMin: number;
   sendSpacingSecondsMax: number;
   nonCommittalDelayDays: number;
@@ -120,12 +124,17 @@ export default function SettingsPage() {
     if (!settings) return;
     setSaving(true);
     setSaved(false);
-    await fetch("/api/settings", {
+    const res = await fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(settings),
     });
     setSaving(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? "Couldn't save your settings — try again.");
+      return;
+    }
     setSaved(true);
   }
 
@@ -290,7 +299,7 @@ export default function SettingsPage() {
           <h2 className="font-semibold text-sm text-[var(--ink)]">When Follow-Ups Go Out</h2>
           <div>
             <h3 className="text-xs font-medium text-[var(--muted)] mb-2 uppercase tracking-wide">
-              Follow-up gaps for brands (working days — Sat/Sun are skipped)
+              Follow-up gaps for brands and influencers (working days — Sat/Sun are skipped)
             </h3>
             <p className="text-xs text-[var(--muted-2)] mb-2">
               Each gap counts from the message before it, not from Email 1. Nothing here is fixed — change any of
@@ -319,29 +328,30 @@ export default function SettingsPage() {
           </div>
           <div>
             <h3 className="text-xs font-medium text-[var(--muted)] mb-2 uppercase tracking-wide">
-              Follow-up gaps for creators (calendar days)
+              What hours influencer emails go out (India time)
             </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <NumField
-                label="1st follow-up — days after Email 1"
-                value={settings.creatorDelayDays1}
-                onChange={(v) => setSettings({ ...settings, creatorDelayDays1: v })}
+            <p className="text-xs text-[var(--muted-2)] mb-2">
+              Influencer follow-ups, check-ins and bulk pitches use the same gaps as brands above, but go out in this
+              window instead — each one at a random minute inside it.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <TimeField
+                label="Start"
+                hour={settings.creatorSendWindowStartHour}
+                minute={settings.creatorSendWindowStartMinute}
+                onChange={(h, m) => setSettings({ ...settings, creatorSendWindowStartHour: h, creatorSendWindowStartMinute: m })}
               />
-              <NumField
-                label="2nd follow-up — days after the 1st"
-                value={settings.creatorDelayDays2}
-                onChange={(v) => setSettings({ ...settings, creatorDelayDays2: v })}
-              />
-              <NumField
-                label="3rd follow-up — days after the 2nd"
-                value={settings.creatorDelayDays3}
-                onChange={(v) => setSettings({ ...settings, creatorDelayDays3: v })}
+              <TimeField
+                label="Stop"
+                hour={settings.creatorSendWindowEndHour}
+                minute={settings.creatorSendWindowEndMinute}
+                onChange={(h, m) => setSettings({ ...settings, creatorSendWindowEndHour: h, creatorSendWindowEndMinute: m })}
               />
             </div>
           </div>
           <div>
             <h3 className="text-xs font-medium text-[var(--muted)] mb-2 uppercase tracking-wide">
-              What hours emails can go out
+              What hours brand emails go out (India time)
             </h3>
             <p className="text-xs text-[var(--muted-2)] mb-2">
               Only business days (Mon–Fri) below are used — a follow-up due on a weekend moves to the next Monday

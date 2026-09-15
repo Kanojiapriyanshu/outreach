@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { scheduleInitialEmail } from "@/lib/trackSequence";
-import { clampToSendingWindow } from "@/lib/businessDays";
+import { clampToSendingWindow, sendingWindowFor } from "@/lib/businessDays";
 import { CREATOR_VARIABLES } from "@/lib/templates";
 
 export const maxDuration = 60;
@@ -47,7 +47,8 @@ export async function POST(req: NextRequest) {
   if (!account) return NextResponse.json({ error: "No connected Gmail account — connect one in Settings first." }, { status: 400 });
 
   const settings = await prisma.automationSettings.findFirstOrThrow();
-  const scheduledAt = body.sendMode === "now" ? new Date() : clampToSendingWindow(new Date(), settings);
+  // "window" means the influencer window (evenings IST by default), same as their follow-ups.
+  const scheduledAt = body.sendMode === "now" ? new Date() : clampToSendingWindow(new Date(), sendingWindowFor("CREATOR", settings));
 
   const seen = new Set<string>();
   const results: { creatorId: string; to: string; status: "scheduled" | "skipped" | "error"; detail?: string }[] = [];

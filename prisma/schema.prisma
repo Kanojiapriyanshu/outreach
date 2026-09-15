@@ -750,6 +750,14 @@ model AutomationSettings {
   sendWindowEndHour     Int      @default(12)
   sendWindowEndMinute   Int      @default(0)
   sendWindowDays        String   @default("MON,TUE,WED,THU,FRI")
+  /**
+   * Influencer emails (follow-ups, check-ins, bulk pitches) go out in their own window, IST —
+   * evenings by default. Days and the gaps between follow-ups are shared with the brand track.
+   */
+  creatorSendWindowStartHour   Int @default(20)
+  creatorSendWindowStartMinute Int @default(0)
+  creatorSendWindowEndHour     Int @default(22)
+  creatorSendWindowEndMinute   Int @default(0)
   sendSpacingSecondsMin Int      @default(30)
   sendSpacingSecondsMax Int      @default(180)
   /**

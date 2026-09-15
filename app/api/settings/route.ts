@@ -29,9 +29,31 @@ export async function GET() {
   return NextResponse.json({ settings, emailAccounts, suppressed, heartbeat });
 }
 
+function validHour(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 23;
+}
+
+function validMinute(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 59;
+}
+
 export async function PUT(req: NextRequest) {
   const data = await req.json();
   const settings = await prisma.automationSettings.findFirstOrThrow();
+
+  const creatorWindow = {
+    creatorSendWindowStartHour: validHour(data.creatorSendWindowStartHour) ? data.creatorSendWindowStartHour : settings.creatorSendWindowStartHour,
+    creatorSendWindowStartMinute: validMinute(data.creatorSendWindowStartMinute) ? data.creatorSendWindowStartMinute : settings.creatorSendWindowStartMinute,
+    creatorSendWindowEndHour: validHour(data.creatorSendWindowEndHour) ? data.creatorSendWindowEndHour : settings.creatorSendWindowEndHour,
+    creatorSendWindowEndMinute: validMinute(data.creatorSendWindowEndMinute) ? data.creatorSendWindowEndMinute : settings.creatorSendWindowEndMinute,
+  };
+  if (
+    creatorWindow.creatorSendWindowStartHour * 60 + creatorWindow.creatorSendWindowStartMinute >=
+    creatorWindow.creatorSendWindowEndHour * 60 + creatorWindow.creatorSendWindowEndMinute
+  ) {
+    return NextResponse.json({ error: "The influencer sending window has to start before it stops (same day)." }, { status: 400 });
+  }
+
   const updated = await prisma.automationSettings.update({
     where: { id: settings.id },
     data: {
@@ -46,6 +68,7 @@ export async function PUT(req: NextRequest) {
       sendWindowEndHour: data.sendWindowEndHour,
       sendWindowEndMinute: data.sendWindowEndMinute,
       sendWindowDays: data.sendWindowDays,
+      ...creatorWindow,
       sendSpacingSecondsMin: data.sendSpacingSecondsMin,
       sendSpacingSecondsMax: data.sendSpacingSecondsMax,
       nonCommittalDelayDays: data.nonCommittalDelayDays,
