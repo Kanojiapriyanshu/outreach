@@ -18,6 +18,7 @@ import {
   type CreatorReplyAnalysis,
 } from "@/lib/creatorReplyAnalysis";
 import { requestCreatorMediaKit, syncCreatorRateFromSequence } from "@/lib/creatorProfileSync";
+import { emailAddressOf, ownSenderMatcher } from "@/lib/senderIdentity";
 import type { gmail_v1 } from "googleapis";
 import { renderTemplate } from "@/lib/templates";
 import { advanceState, MAX_FOLLOW_UPS, type SequenceState } from "@/lib/stateMachine";
@@ -222,11 +223,11 @@ async function handleCreatorReply(
   };
   const notClaimed: ThreadCheckResult = { terminal: false, manualSendDetected: false };
   const contactEmail = seq.contact.email.toLowerCase();
-  const otherAddresses = findEmailAddresses(text).filter((address) => address !== contactEmail);
+  const replyAddress = emailAddressOf(latest.from);
+  const otherAddresses = findEmailAddresses(text).filter((address) => address !== contactEmail && address !== replyAddress);
   const redirectNote =
-    otherAddresses.length > 0
-      ? ` They mention ${otherAddresses.slice(0, 2).join(" and ")} — possibly a manager to reply to instead.`
-      : "";
+    (replyAddress && replyAddress !== contactEmail ? ` They wrote from ${replyAddress}, not ${contactEmail} — reply to that address.` : "") +
+    (otherAddresses.length > 0 ? ` They mention ${otherAddresses.slice(0, 2).join(" and ")} — possibly a manager to reply to instead.` : "");
   const cancelPending = () =>
     prisma.scheduledAction.updateMany({ where: { sequenceId: seq.id, status: "PENDING" }, data: { status: "CANCELLED" } });
   const stageLog = (stage: PipelineStage) =>
@@ -438,7 +439,13 @@ export async function checkThreadForTerminalEvent(
   let sawOnlyAutoReplies = false;
   let msgCountSoFar = seq.lastKnownMsgCount;
   const creatorListAlreadySent = !PRE_LIST_STAGES.includes(seq.stage);
-  const isFromContact = (msg: { from: string }) => msg.from.toLowerCase().includes(seq.contact.email.toLowerCase());
+  // A message is ours only when it comes from one of the team's connected inboxes (or a teammate on
+  // the company's own domain). Anything else is the other side replying — including from a different
+  // address than the one emailed: a creator's manager or agency, a brand colleague. This used to
+  // require the exact contact address, so such replies (and mailer-daemon bounces) were mistaken for
+  // a message the team had typed in Gmail, and the reply never showed.
+  const isOurs = ownSenderMatcher((await prisma.emailAccount.findMany({ select: { email: true } })).map((a) => a.email));
+  const isFromContact = (msg: { from: string }) => !isOurs(msg.from);
 
   // Full message bodies are fetched only when an influencer thread has a real reply to read. The
   // snippet is ~200 characters — exactly where a rate at the end of a friendly reply gets cut off.

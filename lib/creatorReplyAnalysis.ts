@@ -98,9 +98,11 @@ const KEYWORD_RE = new RegExp(
   "gi"
 );
 
+// Checked in order, so "Short-Form Custom Mid-Roll" is an integration (a mid-roll ad) rather than a
+// Short: the integration signals come before the short-form ones.
 const DELIVERABLE_PATTERNS: [RegExp, string][] = [
   [/\bdedicated\b|\bfull[- ](?:video|review)\b|\bstandalone\b/i, "Dedicated video"],
-  [/\bintegrat|\bmention\b|\bshout.?out\b|\bsegment\b|\bad[- ]read\b|\bpre-?roll\b/i, "Integration"],
+  [/\bintegrat|\bmention\b|\bshout.?out\b|\bsegment\b|\bad[- ]read\b|\b(?:pre|mid|post)-?roll\b/i, "Integration"],
   [/\bshorts?\b|\breels?\b|\btik\s?tok\b/i, "Short-form"],
   [/\binstagram\b|\bstor(?:y|ies)\b/i, "Instagram"],
   [/\bpackage\b|\bbundle\b|\bcombo\b/i, "Package"],
@@ -177,7 +179,9 @@ export function extractQuotedRates(text: string): QuotedRate[] {
   matches.forEach((m, i) => {
     const prevEnd = i > 0 ? matches[i - 1].end : 0;
     const nextStart = i < matches.length - 1 ? matches[i + 1].start : text.length;
-    const before = text.slice(Math.max(prevEnd, m.start - 50), m.start);
+    // Only this price's own line: "…not dedicated videos." on the line above must not label a tier.
+    const ownLineStart = text.lastIndexOf("\n", m.start - 1) + 1;
+    const before = text.slice(Math.max(prevEnd, ownLineStart, m.start - 50), m.start);
     const after = text.slice(m.end, Math.min(nextStart, m.end + 40));
     // "$900 for a dedicated video" names the deliverable after the price; "Dedicated: $900" names
     // it before. Reading the wrong side mislabels the second price in "…dedicated and $500 for X".
@@ -186,7 +190,13 @@ export function extractQuotedRates(text: string): QuotedRate[] {
       : (deliverableIn(before) ?? deliverableIn(after.split(/[.\n]/)[0]));
     const duplicate = rates.some((r) => r.amount === m.amount && r.currency === m.currency && r.deliverable === deliverable);
     if (!duplicate) {
-      rates.push({ amount: m.amount, amountMax: m.amountMax, currency: m.currency, deliverable, raw: m.raw, source: "reply" });
+      // The whole line the price sits on is the useful evidence — "Tier 1 — Full Custom Mid-Roll
+      // ($3,400 USD): 60–90 second…" says what the money buys; "$3,400" alone doesn't.
+      const lineStart = text.lastIndexOf("\n", m.start - 1) + 1;
+      const lineEndIndex = text.indexOf("\n", m.end);
+      const line = text.slice(lineStart, lineEndIndex === -1 ? text.length : lineEndIndex).replace(/\s+/g, " ").trim();
+      const raw = line.length > 0 && line.length <= 140 ? line : m.raw;
+      rates.push({ amount: m.amount, amountMax: m.amountMax, currency: m.currency, deliverable, raw, source: "reply" });
     }
   });
   return rates;

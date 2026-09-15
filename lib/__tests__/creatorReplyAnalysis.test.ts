@@ -45,6 +45,31 @@ describe("extractQuotedRates", () => {
     expect(extractQuotedRates("my fee is ₹45,000")[0]).toMatchObject({ amount: 45000, currency: "INR" });
   });
 
+  it("labels mid-roll tiers as integrations, even one named 'Short-Form', and keeps each tier's line", () => {
+    const text = [
+      "We only do mid-roll integrations, not dedicated videos.",
+      "",
+      "Tier A — Long Mid-Roll ($1,900 USD): 90 second custom mid-roll",
+      "integration with a pinned link.",
+      "",
+      "Tier B — Short-Form Mid-Roll ($1,400 USD): 45 second mid-roll spot.",
+      "",
+      "Tier C — Quick Mention ($900 USD): 20 second read.",
+    ].join("\n");
+    const rates = extractQuotedRates(text);
+    expect(rates.map((r) => [r.amount, r.currency, r.deliverable])).toEqual([
+      [1900, "USD", "Integration"],
+      [1400, "USD", "Integration"],
+      [900, "USD", "Integration"],
+    ]);
+    expect(rates[0].raw).toBe("Tier A — Long Mid-Roll ($1,900 USD): 90 second custom mid-roll");
+  });
+
+  it("still labels real Shorts and Reels as short-form", () => {
+    expect(extractQuotedRates("Shorts: $300")[0].deliverable).toBe("Short-form");
+    expect(extractQuotedRates("Instagram reel for $450")[0].deliverable).toBe("Short-form");
+  });
+
   it("keeps a bare rate but never invents its currency", () => {
     const [rate] = extractQuotedRates("my rate is 800 for a dedicated video");
     expect(rate).toMatchObject({ amount: 800, currency: null, deliverable: "Dedicated video" });
