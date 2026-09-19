@@ -231,6 +231,20 @@ export default function SettingsPage() {
                 )}
               </div>
             </div>
+            {acc.accessStatus === "NEEDS_REAUTH" && (
+              <div
+                className="flex items-center justify-between gap-3 text-xs rounded-lg px-3 py-2"
+                style={{ background: "var(--danger-bg)", color: "var(--danger-fg)" }}
+              >
+                <span>
+                  Google sign-in for this inbox expired, so nothing can send from it. Reconnect it — everything waiting
+                  goes out once it&apos;s back.
+                </span>
+                <a href="/api/auth/google" className="btn-primary px-3 py-1.5 text-xs whitespace-nowrap">
+                  Reconnect
+                </a>
+              </div>
+            )}
             {/* Connected before two-way inbox sync was added, so Gmail never granted permission
                 to change labels. Reconnecting the same account updates it in place — it's the
                 same button as "Add Another Account", just named for what it actually does here,

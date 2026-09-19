@@ -1132,7 +1132,16 @@ export async function runDueScheduledActions() {
   const results = [];
 
   for (const action of due) {
-    const result = await processScheduledAction(action.id);
+    let result: Awaited<ReturnType<typeof processScheduledAction>>;
+    try {
+      result = await processScheduledAction(action.id);
+    } catch (err) {
+      // One failing send (e.g. an inbox whose Gmail access just expired — now marked for
+      // reconnecting) must not fail the whole tick and hold up every other due email behind it.
+      console.error(`[send pass] follow-up ${action.id} failed:`, err);
+      results.push({ actionId: action.id, skipped: true, reason: err instanceof Error ? err.message : "Failed" });
+      continue;
+    }
     results.push({ actionId: action.id, ...result });
     if ("sent" in result && result.sent) {
       await spaceOutNextSend(settings);
@@ -1161,7 +1170,14 @@ export async function runDueInitialEmails() {
   const results = [];
 
   for (const scheduled of due) {
-    const result = await processScheduledInitialEmail(scheduled.id);
+    let result: Awaited<ReturnType<typeof processScheduledInitialEmail>>;
+    try {
+      result = await processScheduledInitialEmail(scheduled.id);
+    } catch (err) {
+      console.error(`[send pass] scheduled email ${scheduled.id} failed:`, err);
+      results.push({ scheduledId: scheduled.id, skipped: true, reason: err instanceof Error ? err.message : "Failed" });
+      continue;
+    }
     results.push({ scheduledId: scheduled.id, ...result });
     if ("sent" in result && result.sent) {
       await spaceOutNextSend(settings);

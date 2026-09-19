@@ -508,6 +508,11 @@ async function sendClaimedInitialEmail(scheduledId: string) {
   // equivalent) already reschedules-to-tomorrow instead of failing for exactly this reason; this
   // mirrors that.
   const emailAccount = await prisma.emailAccount.findUnique({ where: { id: payload.emailAccountId } });
+  // Gmail access expired or revoked: hold the email until the inbox is reconnected instead of
+  // failing it — FAILED is terminal, so the worker would never send it even after reconnecting.
+  if (emailAccount?.accessStatus === "NEEDS_REAUTH") {
+    return { skipped: true, reason: `Gmail for ${emailAccount.email} needs reconnecting` };
+  }
   if (emailAccount && emailAccount.accessStatus === "CONNECTED") {
     const underLimit = await isUnderDailyLimit(emailAccount.id, emailAccount.dailySendLimit);
     if (!underLimit) {
@@ -539,6 +544,9 @@ async function sendClaimedInitialEmail(scheduledId: string) {
  * sendRichEmail directly with no Contact/Brand/Creator/sequence involved. */
 async function sendClaimedPlainEmail(scheduledId: string, payload: PlainEmailInput) {
   const emailAccount = await prisma.emailAccount.findUnique({ where: { id: payload.emailAccountId } });
+  if (emailAccount?.accessStatus === "NEEDS_REAUTH") {
+    return { skipped: true, reason: `Gmail for ${emailAccount.email} needs reconnecting` };
+  }
   if (!emailAccount || emailAccount.accessStatus !== "CONNECTED") {
     await prisma.scheduledInitialEmail.update({
       where: { id: scheduledId },

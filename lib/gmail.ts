@@ -43,11 +43,27 @@ export async function exchangeCodeForTokens(code: string) {
   return tokens;
 }
 
+/** Google no longer accepts this inbox's saved sign-in (expired or revoked) — only reconnecting it
+ * from Settings fixes that. */
+export class GmailReauthError extends Error {
+  constructor(public readonly email: string) {
+    super(`Gmail access for ${email} has expired — reconnect it in Settings.`);
+    this.name = "GmailReauthError";
+  }
+}
+
+function isInvalidGrant(err: unknown): boolean {
+  const e = err as { response?: { data?: { error?: string } }; message?: string } | null;
+  return e?.response?.data?.error === "invalid_grant" || /invalid_grant/i.test(e?.message ?? "");
+}
+
 /** Returns an authenticated Gmail client for a stored EmailAccount, refreshing tokens if needed. */
 export async function gmailClientFor(emailAccountId: string): Promise<gmail_v1.Gmail> {
   const account = await prisma.emailAccount.findUniqueOrThrow({
     where: { id: emailAccountId },
   });
+  // Already known to be rejected by Google — don't keep asking every tick.
+  if (account.accessStatus === "NEEDS_REAUTH") throw new GmailReauthError(account.email);
 
   const oauth2Client = getOAuthClient();
   oauth2Client.setCredentials({
@@ -67,6 +83,22 @@ export async function gmailClientFor(emailAccountId: string): Promise<gmail_v1.G
       },
     });
   });
+
+  // Refresh up front when the access token is missing or about to expire, so an expired or revoked
+  // sign-in ("invalid_grant") is caught here and the inbox marked for reconnecting — instead of
+  // surfacing as a bare error in the middle of a send, every tick, blocking everything behind it.
+  const expiresSoon = !account.accessToken || !account.tokenExpiry || account.tokenExpiry.getTime() < Date.now() + 60_000;
+  if (expiresSoon) {
+    try {
+      await oauth2Client.getAccessToken();
+    } catch (err) {
+      if (isInvalidGrant(err)) {
+        await prisma.emailAccount.update({ where: { id: account.id }, data: { accessStatus: "NEEDS_REAUTH" } });
+        throw new GmailReauthError(account.email);
+      }
+      throw err;
+    }
+  }
 
   return google.gmail({ version: "v1", auth: oauth2Client });
 }
