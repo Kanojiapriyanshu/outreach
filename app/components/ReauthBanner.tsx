@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -6,6 +7,10 @@ import { prisma } from "@/lib/prisma";
  * pile up quietly unless someone happens to open Settings. This makes it impossible to miss.
  */
 export default async function ReauthBanner() {
+  // Read the inbox status on every request. Without this, pages Next.js prerenders at build time
+  // (Settings, Templates…) froze whatever the status was during the build — so the banner kept
+  // saying "on hold" after the inbox had been reconnected.
+  await connection();
   const accounts = await prisma.emailAccount.findMany({
     where: { accessStatus: "NEEDS_REAUTH" },
     select: { email: true },
