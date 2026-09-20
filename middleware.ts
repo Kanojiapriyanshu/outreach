@@ -31,6 +31,14 @@ export async function middleware(req: NextRequest) {
   const userId = token ? await verifySessionToken(token) : null;
 
   if (!userId) {
+    // A brand sent the internal preview link (/media-kit/<id>) instead of the share link has no
+    // login to bounce to — send them to the public view of the same media kit rather than a login
+    // screen. That view still only renders if a live share link exists.
+    const previewId = /^\/media-kit\/([^/]+)$/.exec(pathname)?.[1];
+    if (previewId) {
+      return NextResponse.redirect(new URL(`/media-kit/shared/${previewId}`, req.url));
+    }
+
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
