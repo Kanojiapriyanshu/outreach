@@ -56,6 +56,7 @@ type SequenceWithContact = {
   currentStep: number;
   creatorListResponseAt: Date | null;
   lastReplyAt: Date | null;
+  quotedRateAt: Date | null;
   quotedRates: unknown;
   contact: { name: string; email: string };
 };
@@ -103,6 +104,8 @@ export function computeNextScheduledAt(outreachType: "BRAND" | "CREATOR", step: 
  * replies) is itself a real pipeline event — it should reset the reply-timer and start a fresh
  * nudge cadence, exactly like Email 1 does, instead of just sitting there forever waiting on the
  * follow-up that was scheduled for the *old* message.
+ *
+ * The exception is an influencer who has already quoted a price: see `rateOnFile` below.
  */
 async function handleManualOutboundMessage(
   seq: SequenceWithContact,
@@ -110,17 +113,61 @@ async function handleManualOutboundMessage(
   newMessageCount: number
 ) {
   const isCreator = seq.outreachType === "CREATOR";
+  // The influencer cadence exists to get a rate. Once there is one, the thread is a human
+  // negotiation and the team writing back is part of it — not the start of a new cadence. Treating
+  // it as one sent canned "just checking in on my last message" nudges to creators who had already
+  // named their price and been answered by hand, which reads as never having opened their email.
+  const rateOnFile = isCreator && seq.quotedRateAt !== null;
+
   const claimed = await claimSequence(seq, {
-    status: "WAITING_FOR_REPLY",
-    currentStep: 0,
+    ...(rateOnFile
+      ? // They replied with a rate and the team has now answered: that is the whole state.
+        { status: "REPLIED" }
+      : {
+          status: "WAITING_FOR_REPLY",
+          currentStep: 0,
+          // A fresh round of nudges starting means we're waiting on a new response — don't carry
+          // over the "Response Received" marker from whatever round came before this one.
+          creatorListResponseAt: null,
+        }),
     lastKnownMsgCount: newMessageCount,
-    // A fresh round of nudges starting means we're waiting on a new response — don't carry over
-    // the "Response Received" marker from whatever round came before this one.
-    creatorListResponseAt: null,
     // The team just wrote back, so any reply that was waiting on them has been answered.
     awaitingResponseSince: null,
   });
   if (!claimed) return; // another concurrent check already picked up this same message
+
+  const recordManualSend = prisma.emailMessage.create({
+    data: {
+      sequenceId: seq.id,
+      providerMessageId: message.id,
+      direction: "OUT" as const,
+      source: "MANUAL" as const,
+      subject: message.subject,
+      body: "(sent directly from Gmail — not tracked by the system)",
+      sentAt: new Date(),
+      status: "SENT" as const,
+    },
+  });
+  const cancelPending = prisma.scheduledAction.updateMany({
+    where: { sequenceId: seq.id, status: "PENDING" },
+    data: { status: "CANCELLED" },
+  });
+
+  if (rateOnFile) {
+    await prisma.$transaction([
+      recordManualSend,
+      cancelPending,
+      prisma.activityLog.create({
+        data: {
+          sequenceId: seq.id,
+          eventType: "MANUAL_MESSAGE_DETECTED",
+          description:
+            "Spotted a message you sent directly from Gmail. They've already shared their rate, so this one stays with you — no automatic check-ins.",
+        },
+      }),
+    ]);
+    return;
+  }
 
   const settings = await prisma.automationSettings.findFirstOrThrow();
   const scheduledAt = computeNextScheduledAt(seq.outreachType, 1, settings);
@@ -129,22 +176,8 @@ async function handleManualOutboundMessage(
   const stageChanges = !isCreator && !MANUAL_OR_TERMINAL_STAGES.includes(seq.stage) && seq.stage !== "CREATOR_LIST_SENT";
 
   await prisma.$transaction([
-    prisma.emailMessage.create({
-      data: {
-        sequenceId: seq.id,
-        providerMessageId: message.id,
-        direction: "OUT",
-        source: "MANUAL",
-        subject: message.subject,
-        body: "(sent directly from Gmail — not tracked by the system)",
-        sentAt: new Date(),
-        status: "SENT",
-      },
-    }),
-    prisma.scheduledAction.updateMany({
-      where: { sequenceId: seq.id, status: "PENDING" },
-      data: { status: "CANCELLED" },
-    }),
+    recordManualSend,
+    cancelPending,
     ...(stageChanges
       ? [prisma.outreachSequence.update({ where: { id: seq.id }, data: { stage: "CREATOR_LIST_SENT" as const } })]
       : []),
@@ -854,6 +887,22 @@ async function processScheduledActionClaimed(
     ["REPLIED", "BOUNCED", "UNSUBSCRIBED", "STOPPED", "COMPLETED"].includes(seq.status)
   ) {
     return { skipped: true, reason: `Sequence is ${seq.status}` };
+  }
+
+  // An influencer who has named a price is in a human negotiation, so nothing automatic goes into
+  // that thread again — including a nudge that was already queued when the rate arrived.
+  if (seq.outreachType === "CREATOR" && seq.quotedRateAt) {
+    await prisma.$transaction([
+      prisma.scheduledAction.update({ where: { id: action.id }, data: { status: "CANCELLED" } }),
+      prisma.activityLog.create({
+        data: {
+          sequenceId: seq.id,
+          eventType: "FOLLOW_UP_CANCELLED",
+          description: "Dropped a queued check-in — they've already shared their rate, so this thread is yours to reply to.",
+        },
+      }),
+    ]);
+    return { skipped: true, reason: "Rate already received" };
   }
 
   const suppressed = await prisma.suppressedContact.findUnique({
