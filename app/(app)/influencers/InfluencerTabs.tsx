@@ -3,9 +3,11 @@ import Link from "next/link";
 const TABS = [
   { key: "outreach", href: "/influencers", label: "Outreach" },
   { key: "creators", href: "/influencers/creators", label: "Creators" },
+  { key: "pitch-sheets", href: "/influencers/pitch-sheets", label: "Pitch sheets" },
 ] as const;
 
-/** Switches between the outreach tracker (threads) and the creator roster (people). */
+/** Switches between the outreach tracker (threads), the creator roster (people) and the pitch
+ * sheets sent to brands. */
 export default function InfluencerTabs({ active }: { active: (typeof TABS)[number]["key"] }) {
   return (
     <div className="flex gap-1 p-1 rounded-full w-fit" style={{ background: "var(--neutral-bg)" }}>

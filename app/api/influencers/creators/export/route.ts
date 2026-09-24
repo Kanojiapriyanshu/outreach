@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { csvCell } from "@/lib/influencerOutreach";
 import { formatMoney } from "@/lib/creatorReplyAnalysis";
-import { parseRosterFilters, rosterOrderBy, rosterWhere } from "@/lib/creatorRoster";
+import { parseRosterFilters, rosterOrderBy, rosterWhere, searchTerms } from "@/lib/creatorRoster";
+import { findKitTitleMatches } from "@/lib/creatorSmartSearch";
 import { stageLabelText, statusLabel } from "@/app/components/Badge";
 
 const EXPORT_LIMIT = 5000;
@@ -13,7 +14,10 @@ export async function GET(req: NextRequest) {
   const ids = req.nextUrl.searchParams.get("ids")?.split(",").filter(Boolean).slice(0, EXPORT_LIMIT);
 
   const creators = await prisma.creator.findMany({
-    where: ids && ids.length > 0 ? { id: { in: ids } } : rosterWhere(filters),
+    where:
+      ids && ids.length > 0
+        ? { id: { in: ids } }
+        : rosterWhere(filters, searchTerms(filters.q).length > 0 ? await findKitTitleMatches(filters.q) : {}),
     orderBy: rosterOrderBy(filters.sort),
     take: EXPORT_LIMIT,
     include: {

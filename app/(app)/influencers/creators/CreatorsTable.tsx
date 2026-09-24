@@ -3,12 +3,13 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, Copy, ExternalLink, FileChartColumn, Loader2, MailSearch, Pencil, Send, Download } from "lucide-react";
+import { Check, Copy, ExternalLink, FileChartColumn, Link2, Loader2, MailSearch, Pencil, Search, Send, Download } from "lucide-react";
 import CreatorDetailModal from "../../discovery/CreatorDetailModal";
 import { StageBadge } from "@/app/components/Badge";
 import { formatMoney } from "@/lib/creatorReplyAnalysis";
 import { ROSTER_PLATFORMS } from "@/lib/creatorRoster";
 import BulkPitchDialog, { type PitchCreator } from "./BulkPitchDialog";
+import PitchSheetDialog from "./PitchSheetDialog";
 
 export interface RosterRow {
   id: string;
@@ -32,6 +33,10 @@ export interface RosterRow {
   mediaKitToken: string | null;
   mediaKitGeneratedAt: string | null;
   mediaKitQueued: boolean;
+  /** Replied or has a rate — the only creators a pitch sheet will include. */
+  readyToPitch: boolean;
+  /** Where the current search matched, e.g. a line from their reply or a video title. */
+  match: { label: string; snippet: string } | null;
 }
 
 const EMAIL_BATCH = 9;
@@ -48,7 +53,8 @@ function shortDate(iso: string | null): string {
   return iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
 }
 
-/** The roster table: select creators, then look up emails, make media kits, export or pitch them. */
+/** The roster table: select creators, then make a pitch sheet link for a brand, look up emails, make
+ * media kits, export them, or email the creators. */
 export default function CreatorsTable({ rows, totalMatching }: { rows: RosterRow[]; totalMatching: number }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -56,10 +62,12 @@ export default function CreatorsTable({ rows, totalMatching }: { rows: RosterRow
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [pitching, setPitching] = useState<PitchCreator[] | null>(null);
+  const [sheetRows, setSheetRows] = useState<RosterRow[] | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const selectedRows = rows.filter((r) => selected.has(r.id));
+  const selectedReady = selectedRows.filter((r) => r.readyToPitch).length;
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -131,14 +139,30 @@ export default function CreatorsTable({ rows, totalMatching }: { rows: RosterRow
     <div className="space-y-3">
       <div className="card px-4 py-3 flex items-center gap-2 flex-wrap text-sm">
         <span className="text-[var(--muted)] mr-auto">
-          {selected.size > 0 ? `${selected.size} selected` : `${totalMatching} creator${totalMatching === 1 ? "" : "s"} — select some to act on them`}
+          {selected.size > 0 ? (
+            <>
+              {selected.size} selected
+              <span style={{ color: selectedReady === selected.size ? "var(--success-fg)" : "var(--warn-fg)" }}> · {selectedReady} ready to pitch</span>
+            </>
+          ) : (
+            `${totalMatching} creator${totalMatching === 1 ? "" : "s"} — select some to act on them`
+          )}
         </span>
+        <button
+          onClick={() => setSheetRows(selectedRows)}
+          disabled={selected.size === 0 || !!busy}
+          className="btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs disabled:opacity-40"
+          title="One no-login link for a brand with these creators' channels, media kits and rates"
+        >
+          <Link2 size={13} /> Make pitch sheet link
+        </button>
         <button
           onClick={() => setPitching(toPitch(selectedRows))}
           disabled={selected.size === 0 || !!busy}
-          className="btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs disabled:opacity-40"
+          className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs disabled:opacity-40"
+          title="Write and queue outreach emails to these creators"
         >
-          <Send size={13} /> Pitch selected
+          <Send size={13} /> Email creators
         </button>
         <button
           onClick={() => void runAction("find-email", selectedRows.filter((r) => !r.email).map((r) => r.id))}
@@ -240,6 +264,12 @@ export default function CreatorsTable({ rows, totalMatching }: { rows: RosterRow
                         <div className="text-xs text-[var(--muted-2)] truncate" title={row.contentHighlights ?? row.niche ?? ""}>
                           {[row.country, row.contentHighlights ?? row.niche].filter(Boolean).join(" · ") || "—"}
                         </div>
+                        {row.match && (
+                          <div className="mt-1 text-[11px] leading-snug text-[var(--muted)] whitespace-normal" title={row.match.snippet}>
+                            <Search size={10} className="inline -mt-0.5 mr-1" />
+                            <span className="font-medium">{row.match.label}:</span> {row.match.snippet}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </td>
@@ -357,7 +387,7 @@ export default function CreatorsTable({ rows, totalMatching }: { rows: RosterRow
 
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-1 justify-end">
-                      <button onClick={() => setPitching(toPitch([row]))} className="p-1.5 rounded text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]" title="Pitch this creator">
+                      <button onClick={() => setPitching(toPitch([row]))} className="p-1.5 rounded text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]" title="Email this creator">
                         <Send size={14} />
                       </button>
                       <button onClick={() => setDetailId(row.id)} className="p-1.5 rounded text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]" title="Edit email, platforms and notes">
@@ -373,6 +403,7 @@ export default function CreatorsTable({ rows, totalMatching }: { rows: RosterRow
       </div>
 
       {detailId && <CreatorDetailModal creatorId={detailId} onClose={() => setDetailId(null)} onSaved={() => router.refresh()} />}
+      {sheetRows && <PitchSheetDialog rows={sheetRows} onClose={() => setSheetRows(null)} />}
       {pitching && (
         <BulkPitchDialog
           creators={pitching}

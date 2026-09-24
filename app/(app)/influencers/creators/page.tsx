@@ -2,7 +2,8 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { Download } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { parseRosterFilters, rosterOrderBy, rosterQueryString, rosterWhere } from "@/lib/creatorRoster";
+import { matchSnippet, parseRosterFilters, rosterOrderBy, rosterQueryString, rosterWhere, searchTerms } from "@/lib/creatorRoster";
+import { findKitTitleMatches, kitTitlesByKitId } from "@/lib/creatorSmartSearch";
 import InfluencerTabs from "../InfluencerTabs";
 import RosterFilters from "./RosterFilters";
 import CreatorsTable, { type RosterRow } from "./CreatorsTable";
@@ -16,14 +17,17 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
   const params = await searchParams;
   const filters = parseRosterFilters(params);
   const page = Math.max(1, Number(params.page) || 1);
-  const where = rosterWhere(filters);
+  const terms = searchTerms(filters.q);
+  const kitMatches = terms.length > 0 ? await findKitTitleMatches(filters.q) : {};
+  const where = rosterWhere(filters, kitMatches);
 
-  const [total, withEmail, awaitingLookup, withRate, withKit, filteredCount, creators] = await Promise.all([
+  const [total, withEmail, awaitingLookup, withRate, withKit, readyCount, filteredCount, creators] = await Promise.all([
     prisma.creator.count(),
     prisma.creator.count({ where: { email: { not: null } } }),
     prisma.creator.count({ where: { email: null, channelId: { not: null }, emailCheckedAt: null } }),
     prisma.creator.count({ where: { quotedRateAt: { not: null } } }),
     prisma.creator.count({ where: { mediaKitShareToken: { not: null } } }),
+    prisma.creator.count({ where: rosterWhere({ q: "", email: "", platform: "", status: "ready", sort: "recent" }) }),
     prisma.creator.count({ where }),
     prisma.creator.findMany({
       where,
@@ -37,7 +41,17 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
               where: { deletedAt: null },
               orderBy: { createdAt: "desc" },
               take: 1,
-              select: { id: true, stage: true, status: true, lastReplyAt: true, awaitingResponseSince: true, createdAt: true },
+              select: {
+                id: true,
+                stage: true,
+                status: true,
+                lastReplyAt: true,
+                awaitingResponseSince: true,
+                createdAt: true,
+                lastReplyText: true,
+                replySummary: true,
+                rateNote: true,
+              },
             },
           },
         },
@@ -45,8 +59,12 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
     }),
   ]);
 
+  // Only needed to explain a search match, so skipped entirely when nothing is searched.
+  const kitTitles = terms.length > 0 ? await kitTitlesByKitId(creators.map((c) => c.mediaKitId ?? "")) : new Map<string, string[]>();
+
   const rows: RosterRow[] = creators.map((c) => {
     const sequence = c.contacts.flatMap((contact) => contact.sequences).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+    const replied = !!sequence && (!!sequence.lastReplyAt || sequence.status === "REPLIED" || sequence.status === "UNSUBSCRIBED");
     return {
       id: c.id,
       name: c.channelName ?? c.name,
@@ -73,7 +91,7 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
             sequenceId: sequence.id,
             stage: sequence.stage,
             status: sequence.status,
-            replied: !!sequence.lastReplyAt || sequence.status === "REPLIED" || sequence.status === "UNSUBSCRIBED",
+            replied,
             awaiting: !!sequence.awaitingResponseSince,
             contactedAt: sequence.createdAt.toISOString(),
           }
@@ -81,6 +99,19 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
       mediaKitToken: c.mediaKitShareToken,
       mediaKitGeneratedAt: c.mediaKitGeneratedAt?.toISOString() ?? null,
       mediaKitQueued: !!c.mediaKitRequestedAt,
+      readyToPitch: replied || c.quotedRateAt !== null,
+      match: matchSnippet(
+        [
+          { label: "In their reply", text: sequence?.lastReplyText },
+          { label: "Reply summary", text: sequence?.replySummary },
+          { label: "In their videos", text: (c.mediaKitId && kitTitles.get(c.mediaKitId)?.join(" · ")) || null },
+          { label: "Their content", text: c.contentHighlights ?? c.niche },
+          { label: "Channel description", text: c.description },
+          { label: "Your notes", text: c.notes },
+          { label: "Their rate", text: [c.quotedRateDeliverable, sequence?.rateNote].filter(Boolean).join(" · ") || null },
+        ],
+        terms
+      ),
     };
   });
 
@@ -104,12 +135,13 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
 
       <InfluencerTabs active="creators" />
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
         <Stat label="Creators" value={total} />
         <Stat label={`Have an email · ${emailPercent}%`} value={withEmail} href="/influencers/creators?email=has" />
         <Stat label="Queued for email search" value={awaitingLookup} href="/influencers/creators?email=missing" />
         <Stat label="Rates on file" value={withRate} href="/influencers/creators?status=rate&sort=rate" />
         <Stat label="Media kits ready" value={withKit} />
+        <Stat label="Ready to pitch" value={readyCount} href="/influencers/creators?status=ready" />
       </div>
 
       <Suspense fallback={<div className="h-10" />}>

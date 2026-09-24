@@ -18,6 +18,9 @@ const PUBLIC_PATHS = [
   // Shared channel media kits — same reasoning as the Insight OS pair above.
   "/api/media-kit/public",
   "/media-kit/shared",
+  // Pitch sheets sent to brands — same reasoning; expiry and turn-off are checked in the route.
+  "/api/pitch-sheets/public",
+  "/pitch-sheet",
 ];
 
 export async function middleware(req: NextRequest) {

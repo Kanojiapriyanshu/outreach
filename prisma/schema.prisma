@@ -440,7 +440,8 @@ model Creator {
   quotedRateDeliverable String?
   quotedRateAt          DateTime?
 
-  contacts Contact[]
+  contacts        Contact[]
+  pitchSheetItems PitchSheetItem[]
 
   @@index([subscriberCount])
   @@index([lastDiscoveredAt])
@@ -899,4 +900,59 @@ model ChannelMediaKitShare {
   revokedAt  DateTime?
 
   @@index([mediaKitId])
+}
+
+/**
+ * A creator shortlist sent to a brand as one no-login link — replaces the hand-made Google Doc.
+ * Creator stats and media kits are read live when the brand opens it; the price shown is the
+ * brand rate saved on each item, never the creator's own quote.
+ */
+model PitchSheet {
+  id           String           @id @default(cuid())
+  /**
+   * The unguessable share token — the only access control on the public page.
+   */
+  token        String           @unique
+  title        String
+  brandName    String
+  brandEmail   String?
+  intro        String?          @db.Text
+  /**
+   * Null = never expires. Defaults to 30 days from creation.
+   */
+  expiresAt    DateTime?
+  /**
+   * Set to withdraw a link that's already been sent, without deleting the sheet.
+   */
+  revokedAt    DateTime?
+  viewCount    Int              @default(0)
+  lastViewedAt DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  items        PitchSheetItem[]
+
+  @@index([createdAt])
+}
+
+model PitchSheetItem {
+  id                String     @id @default(cuid())
+  sheetId           String
+  sheet             PitchSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  creatorId         String
+  creator           Creator    @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  position          Int        @default(0)
+  /**
+   * What we quote the brand — typically the creator's quoted rate plus our margin. The creator's
+   * own quote (Creator.quotedRateAmount) is never sent to the public page.
+   */
+  brandRate         Float?
+  brandRateCurrency String?
+  deliverable       String?
+  /**
+   * Free text shown to the brand instead of / beside the price, e.g. "Product + $1,500".
+   */
+  rateNote          String?
+
+  @@index([sheetId])
+  @@index([creatorId])
 }
