@@ -956,3 +956,40 @@ model PitchSheetItem {
   @@index([sheetId])
   @@index([creatorId])
 }
+
+/**
+ * A client services agreement. `data` holds ContractData (lib/contracts/template.ts): the fields,
+ * any clause edits and custom clauses — the document itself is always rebuilt from it, so the
+ * editor, the PDF and the deal check can never disagree.
+ */
+model Contract {
+  id        String            @id @default(cuid())
+  title     String
+  /**
+   * DRAFT, SENT (with the brand), SIGNED, or VOID.
+   */
+  status    String            @default("DRAFT")
+  data      Json
+  sentAt    DateTime?
+  signedAt  DateTime?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  versions  ContractVersion[]
+
+  @@index([updatedAt])
+}
+
+/**
+ * A frozen copy of a contract — saved by hand, or automatically when it's marked sent or signed —
+ * so the editor can show exactly what changed since the brand last saw it.
+ */
+model ContractVersion {
+  id         String   @id @default(cuid())
+  contractId String
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  label      String
+  data       Json
+  createdAt  DateTime @default(now())
+
+  @@index([contractId, createdAt])
+}
