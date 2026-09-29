@@ -2,7 +2,6 @@ import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { daysLeft } from "@/lib/pitchSheet";
 import { appBaseUrl, loadPublicPitchSheet, PitchSheetUnavailable, type PublicPitchSheet } from "@/lib/pitchSheetServer";
-import PrintButton from "./PrintButton";
 
 export const dynamic = "force-dynamic";
 
@@ -50,12 +49,9 @@ export default async function PitchSheetPage({ params }: { params: Promise<{ tok
     <main className="min-h-screen bg-slate-100 py-0 sm:py-10 print:bg-white print:py-0">
       <div className="mx-auto max-w-5xl overflow-hidden bg-white shadow-sm sm:rounded-3xl print:shadow-none">
         <header className="px-5 py-8 text-white sm:px-10 sm:py-10" style={{ background: `linear-gradient(135deg, #0e5c6b, ${TEAL})` }}>
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <div className="text-sm font-bold tracking-[0.2em]">FIDEM GROWTH</div>
-              <div className="text-xs text-white/75">Influencer Marketing & Creator Partnerships</div>
-            </div>
-            <PrintButton />
+          <div>
+            <div className="text-sm font-bold tracking-[0.2em]">FIDEM GROWTH</div>
+            <div className="text-xs text-white/75">Influencer Marketing & Creator Partnerships</div>
           </div>
           <h1 className="mt-8 text-2xl font-bold sm:text-3xl">{sheet.title}</h1>
           <p className="mt-1 text-white/80">Prepared for {sheet.brandName}</p>
