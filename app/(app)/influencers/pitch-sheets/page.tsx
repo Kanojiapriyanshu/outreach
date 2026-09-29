@@ -19,7 +19,7 @@ export default async function PitchSheetsPage() {
   const sheets = await prisma.pitchSheet.findMany({
     orderBy: { createdAt: "desc" },
     take: 300,
-    include: { items: { orderBy: { position: "asc" }, select: { creator: { select: { name: true, channelName: true } } } } },
+    include: { items: { orderBy: { position: "asc" }, select: { id: true, creator: { select: { name: true, channelName: true } } } } },
   });
 
   return (
@@ -96,6 +96,7 @@ export default async function PitchSheetsPage() {
                         brandName={s.brandName}
                         brandEmail={s.brandEmail}
                         creatorNames={names}
+                        items={s.items.map((i) => ({ id: i.id, name: i.creator.channelName ?? i.creator.name }))}
                         expiresAt={s.expiresAt?.toISOString() ?? null}
                       />
                     </td>

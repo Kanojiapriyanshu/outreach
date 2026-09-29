@@ -100,6 +100,7 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
       mediaKitGeneratedAt: c.mediaKitGeneratedAt?.toISOString() ?? null,
       mediaKitQueued: !!c.mediaKitRequestedAt,
       readyToPitch: replied || c.quotedRateAt !== null,
+      rateNoAmount: c.quotedRateAt !== null && c.quotedRateAmount === null,
       match: matchSnippet(
         [
           { label: "In their reply", text: sequence?.lastReplyText },

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Check, CheckCircle2, Copy, ExternalLink, FileChartColumn, Link2, Loader2, Mail, X } from "lucide-react";
+import { Check, CheckCircle2, Copy, ExternalLink, FileChartColumn, Link2, Loader2, Mail, RotateCcw, X } from "lucide-react";
 import { formatMoney } from "@/lib/creatorReplyAnalysis";
 import { EXPIRY_CHOICES, brandEmailDraft, brandRateFromQuote, gmailComposeUrl, notReadyReason } from "@/lib/pitchSheet";
 import type { RosterRow } from "./CreatorsTable";
@@ -45,8 +45,21 @@ function priceFor(row: RosterRow, margin: string): string {
  * to send the brand themselves.
  */
 export default function PitchSheetDialog({ rows, onClose }: { rows: RosterRow[]; onClose: () => void }) {
-  const ready = useMemo(() => rows.filter((r) => r.readyToPitch), [rows]);
+  const eligible = useMemo(() => rows.filter((r) => r.readyToPitch), [rows]);
   const leftOut = useMemo(() => rows.filter((r) => !r.readyToPitch), [rows]);
+  // Creators taken off this sheet here, without having to go back and untick them in the table.
+  const [removedIds, setRemovedIds] = useState<Set<string>>(() => new Set());
+  const ready = useMemo(() => eligible.filter((r) => !removedIds.has(r.id)), [eligible, removedIds]);
+  const removed = useMemo(() => eligible.filter((r) => removedIds.has(r.id)), [eligible, removedIds]);
+
+  function toggleRemoved(id: string) {
+    setRemovedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const [brandName, setBrandName] = useState("");
   const [brandEmail, setBrandEmail] = useState("");
@@ -54,7 +67,7 @@ export default function PitchSheetDialog({ rows, onClose }: { rows: RosterRow[];
   const [margin, setMargin] = useState(savedMargin);
   const [drafts, setDrafts] = useState<Record<string, RowDraft>>(() =>
     Object.fromEntries(
-      ready.map((r) => [
+      eligible.map((r) => [
         r.id,
         { deliverable: r.rate?.deliverable ?? "", brandRate: priceFor(r, savedMargin()), currency: r.rate?.currency ?? "USD", rateNote: "", hasKit: !!r.mediaKitToken },
       ])
@@ -289,7 +302,11 @@ export default function PitchSheetDialog({ rows, onClose }: { rows: RosterRow[];
                         <div className="flex-1 min-w-[160px]">
                           <div className="text-sm font-medium text-[var(--ink)] truncate">{r.name}</div>
                           <div className="text-[11px] text-[var(--muted-2)]">
-                            {r.rate ? `They quoted ${formatMoney(r.rate.amount, r.rate.currency)}${r.rate.deliverable ? ` · ${r.rate.deliverable}` : ""}` : "Replied · no rate yet"}
+                            {r.rate
+                              ? `They quoted ${formatMoney(r.rate.amount, r.rate.currency)}${r.rate.deliverable ? ` · ${r.rate.deliverable}` : ""}`
+                              : r.rateNoAmount
+                                ? "Rate received · no fixed price"
+                                : "Replied · no rate yet"}
                             {" · "}
                             {d.hasKit ? "media kit ✓" : <span style={{ color: "var(--warn-fg)" }}>no media kit</span>}
                           </div>
@@ -309,9 +326,30 @@ export default function PitchSheetDialog({ rows, onClose }: { rows: RosterRow[];
                           <span className="text-[11px] text-[var(--muted-2)] w-7">{d.currency}</span>
                         </div>
                         <input className="input py-1.5 text-xs w-full sm:w-auto sm:flex-1" value={d.rateNote} onChange={(e) => setDraft(r.id, { rateNote: e.target.value })} placeholder="Note for the brand, e.g. + product" aria-label={`Rate note for ${r.name}`} />
+                        <button
+                          type="button"
+                          onClick={() => toggleRemoved(r.id)}
+                          className="p-1.5 rounded text-[var(--muted)] hover:text-[var(--danger-fg)] hover:bg-[var(--danger-bg)]"
+                          title="Remove from this sheet"
+                          aria-label={`Remove ${r.name} from this sheet`}
+                        >
+                          <X size={14} />
+                        </button>
                       </div>
                     );
                   })}
+                  {removed.map((r) => (
+                    <div key={r.id} className="p-3 flex items-center gap-3 opacity-60">
+                      <Avatar row={r} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-[var(--ink)] truncate line-through">{r.name}</div>
+                        <div className="text-[11px] text-[var(--muted-2)]">Removed from this sheet</div>
+                      </div>
+                      <button type="button" onClick={() => toggleRemoved(r.id)} className="inline-flex items-center gap-1 text-xs font-medium" style={{ color: "var(--brand-teal-dark)" }}>
+                        <RotateCcw size={12} /> Undo
+                      </button>
+                    </div>
+                  ))}
                   {leftOut.map((r) => (
                     <div key={r.id} className="p-3 flex items-center gap-3 opacity-60">
                       <Avatar row={r} />
