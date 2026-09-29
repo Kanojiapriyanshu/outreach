@@ -35,6 +35,8 @@ export interface RosterRow {
   mediaKitQueued: boolean;
   /** Replied or has a rate — the only creators a pitch sheet will include. */
   readyToPitch: boolean;
+  /** A rate was recorded but without a number, e.g. "depends on product". */
+  rateNoAmount: boolean;
   /** Where the current search matched, e.g. a line from their reply or a video title. */
   match: { label: string; snippet: string } | null;
 }
@@ -356,6 +358,12 @@ export default function CreatorsTable({ rows, totalMatching }: { rows: RosterRow
                           {row.outreach.awaiting ? "Needs your reply" : row.outreach.replied ? "Replied" : `Pitched ${shortDate(row.outreach.contactedAt)}`}
                         </span>
                       </Link>
+                    ) : row.rate || row.rateNoAmount ? (
+                      // Rate agreed over Gmail directly — no outreach thread here, but they're a live contact.
+                      <span className="inline-flex flex-col gap-1 items-start">
+                        <StageBadge stage="RATE_RECEIVED" />
+                        <span className="text-[var(--muted-2)]">By email{row.rate?.at ? ` · ${shortDate(row.rate.at)}` : ""}</span>
+                      </span>
                     ) : (
                       <span className="text-[var(--muted-2)]">Not contacted</span>
                     )}

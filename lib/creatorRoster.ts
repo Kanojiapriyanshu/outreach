@@ -18,7 +18,7 @@ export const ROSTER_STATUSES = [
   { key: "not-contacted", label: "Not contacted" },
   { key: "contacted", label: "Contacted" },
   { key: "replied", label: "Replied" },
-  { key: "rate", label: "Has a rate" },
+  { key: "rate", label: "Rate received" },
   { key: "ready", label: "Ready to pitch (replied or has a rate)" },
 ] as const;
 
@@ -113,9 +113,11 @@ export function rosterWhere(f: RosterFilters, kitMatches: KitTitleMatches = {}):
   if (f.email === "has") and.push({ email: { not: null } });
   if (f.email === "missing") and.push({ email: null });
   if (f.platform) and.push({ platformTags: { has: f.platform } });
-  if (f.status === "not-contacted") and.push({ contacts: { none: { sequences: { some: LIVE_SEQUENCE } } } });
-  if (f.status === "contacted") and.push({ contacts: { some: { sequences: { some: LIVE_SEQUENCE } } } });
-  if (f.status === "replied") and.push({ contacts: { some: { sequences: { some: REPLIED_SEQUENCE } } } });
+  // A rate on file means the creator was reached and answered — even when that happened in Gmail
+  // directly rather than through an outreach sequence here.
+  if (f.status === "not-contacted") and.push({ quotedRateAt: null, contacts: { none: { sequences: { some: LIVE_SEQUENCE } } } });
+  if (f.status === "contacted") and.push({ OR: [{ quotedRateAt: { not: null } }, { contacts: { some: { sequences: { some: LIVE_SEQUENCE } } } }] });
+  if (f.status === "replied") and.push({ OR: [{ quotedRateAt: { not: null } }, { contacts: { some: { sequences: { some: REPLIED_SEQUENCE } } } }] });
   if (f.status === "rate") and.push({ quotedRateAt: { not: null } });
   if (f.status === "ready") {
     and.push({ OR: [{ quotedRateAt: { not: null } }, { contacts: { some: { sequences: { some: REPLIED_SEQUENCE } } } }] });
