@@ -21,6 +21,8 @@ export interface DeliveryAlert {
 
 export const LAST_SEEN_KEY = "fidem_notifications_last_seen";
 
+const POLL_MS = 60_000;
+
 /** Prefixes (or strips) the "(N) " unread badge on the browser tab title, Gmail-style. Reads
  * whatever's currently there rather than a hardcoded base string, so it can't compound. */
 function setTitleBadge(count: number) {
@@ -61,10 +63,26 @@ export function useNotifications() {
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    load();
-    const interval = setInterval(load, 30_000);
-    return () => clearInterval(interval);
+    // Only while the tab is on screen. Every poll is a database query, and the database is on a
+    // plan metered by the hour that sleeps after 5 idle minutes — a CRM tab left open in the
+    // background used to keep it awake all day on its own. Coming back to the tab refreshes at once.
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (interval) return;
+      void load();
+      interval = setInterval(load, POLL_MS);
+    };
+    const stop = () => {
+      if (interval) clearInterval(interval);
+      interval = null;
+    };
+    const onVisibility = () => (document.visibilityState === "visible" ? start() : stop());
+    onVisibility();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [load]);
 
   return { threads, alerts, unreadCount, waiting, reload: load };

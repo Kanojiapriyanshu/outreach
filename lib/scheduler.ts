@@ -20,6 +20,7 @@ import {
 import { requestCreatorMediaKit, syncCreatorRateFromSequence } from "@/lib/creatorProfileSync";
 import { emailAddressOf, ownSenderMatcher } from "@/lib/senderIdentity";
 import { isTrackingNotification } from "@/lib/trackingSenders";
+import { BURST_TICK_SECONDS, nextTickDelaySeconds } from "@/lib/workerCadence";
 import type { gmail_v1 } from "googleapis";
 import { renderTemplate } from "@/lib/templates";
 import { advanceState, MAX_FOLLOW_UPS, MANUAL_OR_TERMINAL_STAGES, stageAfterSilence, type SequenceState } from "@/lib/stateMachine";
@@ -1262,6 +1263,9 @@ const INBOX_SCAN_INTERVAL_MS = 2 * 60 * 1000;
 
 // Enrichment only starts if the tick is still young, and stops well before the route's 60s limit.
 const ENRICHMENT_START_CUTOFF_MS = 25_000;
+// After a long sleep both Gmail passes run in one tick — the second only if the first left enough
+// of the tick route's 60s ceiling.
+const SECOND_HEAVY_PASS_CUTOFF_MS = 30_000;
 const ENRICHMENT_BUDGET_MS = 20_000;
 const TICK_SOFT_LIMIT_MS = 45_000;
 
@@ -1322,16 +1326,32 @@ async function releaseScheduledActionClaim(id: string) {
 const SEND_SCAN_DEPTH = 5;
 
 /**
+ * Follow-ups that can actually go out: pending, on a live sequence that isn't paused or finished,
+ * sending from an inbox that's connected. The send gate rejects everything else anyway — leaving
+ * those rows out of the scan stops them sitting at the head of the queue, and stops them counting
+ * as "due" when the worker decides whether it can go back to sleep (see lib/workerCadence.ts).
+ */
+const SENDABLE_ACTION: Prisma.ScheduledActionWhereInput = {
+  status: "PENDING",
+  sequence: {
+    deletedAt: null,
+    status: { notIn: ["PAUSED", "REPLIED", "BOUNCED", "UNSUBSCRIBED", "STOPPED", "COMPLETED"] },
+    emailAccount: { accessStatus: "CONNECTED" },
+  },
+};
+
+/**
  * Sends the single most-overdue follow-up that's ready to go, if the spacing gate allows one
- * right now. One per tick rather than a whole batch: ticks run every ~30s, so a backlog still
- * drains quickly, and each send naturally lands a randomized gap after the last one without the
- * pass ever blocking. Anything not sent this tick is still due and gets picked up by the next.
+ * right now. One per tick rather than a whole batch: while anything is due the worker ticks every
+ * ~30s (see lib/workerCadence.ts), so a backlog still drains quickly, and each send naturally lands
+ * a randomized gap after the last one without the pass ever blocking. Anything not sent this tick
+ * is still due and gets picked up by the next.
  */
 export async function runDueScheduledActions() {
   if (!(await sendingAllowedNow())) return [];
 
   const due = await prisma.scheduledAction.findMany({
-    where: { status: "PENDING", scheduledAt: { lte: new Date() }, sequence: { deletedAt: null } },
+    where: { ...SENDABLE_ACTION, scheduledAt: { lte: new Date() } },
     orderBy: { scheduledAt: "asc" },
     take: SEND_SCAN_DEPTH,
   });
@@ -1397,6 +1417,94 @@ export async function runDueInitialEmails() {
 }
 
 /**
+ * Takes the inbox scan for this caller if nobody has run one in the last `minGapMs` — atomic, so
+ * the worker and several open CRM tabs arriving together start one scan between them, not one each.
+ */
+async function claimInboxScan(minGapMs: number): Promise<boolean> {
+  const state = await getWorkerState();
+  const claimed = await prisma.workerHeartbeat.updateMany({
+    where: { id: state.id, OR: [{ lastInboxScanAt: null }, { lastInboxScanAt: { lt: new Date(Date.now() - minGapMs) } }] },
+    data: { lastInboxScanAt: new Date() },
+  });
+  return claimed.count === 1;
+}
+
+/**
+ * Pulls what changed in Gmail into the inbox mirror, then reads any reply that landed on a thread
+ * the automation had already wrapped up — the late reply the regular reply check would never see.
+ */
+async function runInboxPass(): Promise<{ threadsSynced: number; replyResults: { sequenceId: string; event: string }[] }> {
+  try {
+    const synced = await syncInbox();
+    const replyResults: { sequenceId: string; event: string }[] = [];
+    if (synced.sequenceIds.length > 0) {
+      // Something happened on these tracked threads: check them first on the next reply pass.
+      await prisma.outreachSequence.updateMany({ where: { id: { in: synced.sequenceIds } }, data: { lastReplyCheckAt: null } });
+      replyResults.push(...(await runDormantReplyCheck(synced.sequenceIds)));
+    }
+    return { threadsSynced: synced.threadsSynced, replyResults };
+  } catch (err) {
+    // A failure scanning for new mail must never take down whatever called it (a tick's sends have
+    // already happened and shouldn't be reported as failed because of this).
+    console.error("[inbox watch] pass failed:", err);
+    return { threadsSynced: 0, replyResults: [] };
+  }
+}
+
+// Sync-on-open: at most one catch-up every 5 minutes however many tabs or people open the CRM, and
+// it stops reading threads early enough to finish inside the route's 60s limit.
+const CATCH_UP_MIN_GAP_MS = 5 * 60 * 1000;
+const CATCH_UP_REPLY_CHECK_CUTOFF_MS = 25_000;
+
+/**
+ * Run when someone opens the CRM (or comes back to it): the worker may be asleep for up to an hour,
+ * so this brings Gmail and replies up to date on the spot instead of showing a stale screen. Sends
+ * stay with the worker — this only reads. `ran: false` = another tab or the worker synced within
+ * the last 5 minutes, so what's on screen is already fresh.
+ */
+export async function runCatchUpSync(): Promise<{ ran: boolean; threadsSynced: number; repliesFound: number }> {
+  const startedAt = Date.now();
+  if (!(await claimInboxScan(CATCH_UP_MIN_GAP_MS))) return { ran: false, threadsSynced: 0, repliesFound: 0 };
+
+  const inbox = await runInboxPass();
+  const replyResults = [...inbox.replyResults];
+  if (Date.now() - startedAt < CATCH_UP_REPLY_CHECK_CUTOFF_MS) {
+    const state = await getWorkerState();
+    await prisma.workerHeartbeat.update({ where: { id: state.id }, data: { lastReplyCheckAt: new Date() } });
+    replyResults.push(...(await runContinuousReplyCheck()));
+  }
+  return { ran: true, threadsSynced: inbox.threadsSynced, repliesFound: replyResults.length };
+}
+
+/**
+ * When the worker should tick next (see lib/workerCadence.ts): soon while emails are due, at the
+ * next scheduled send otherwise, and never later than the 15-minute / 1-hour ceiling. Lets the
+ * database sleep between ticks instead of being woken every 30 seconds around the clock.
+ */
+async function planNextTick(): Promise<number> {
+  try {
+    const now = new Date();
+    const [dueActions, dueInitial, nextAction, nextInitial, state] = await Promise.all([
+      prisma.scheduledAction.count({ where: { ...SENDABLE_ACTION, scheduledAt: { lte: now } } }),
+      prisma.scheduledInitialEmail.count({ where: { status: "PENDING", scheduledAt: { lte: now } } }),
+      prisma.scheduledAction.findFirst({ where: { ...SENDABLE_ACTION, scheduledAt: { gt: now } }, orderBy: { scheduledAt: "asc" }, select: { scheduledAt: true } }),
+      prisma.scheduledInitialEmail.findFirst({ where: { status: "PENDING", scheduledAt: { gt: now } }, orderBy: { scheduledAt: "asc" }, select: { scheduledAt: true } }),
+      getWorkerState(),
+    ]);
+    const upcoming = [nextAction?.scheduledAt, nextInitial?.scheduledAt].filter((d): d is Date => !!d);
+    return nextTickDelaySeconds({
+      now,
+      dueNow: dueActions + dueInitial,
+      nextSendAllowedAt: state.nextSendAllowedAt,
+      nextDueAt: upcoming.length ? new Date(Math.min(...upcoming.map((d) => d.getTime()))) : null,
+    });
+  } catch (err) {
+    console.error("[worker] couldn't plan the next tick:", err);
+    return BURST_TICK_SECONDS * 2;
+  }
+}
+
+/**
  * The full worker tick: send whatever's actually due first — scheduled Email 1s, then follow-ups
  * — then spend whatever's left of the time budget checking active sequences for replies/manual-
  * sends, and finally scan each connected inbox for new mail that isn't part of any tracked thread
@@ -1410,16 +1518,20 @@ export async function runWorkerTick() {
   const initialEmailResults = await runDueInitialEmails();
   const actionResults = await runDueScheduledActions();
 
-  // The two Gmail-heavy passes run on their own slower cadence. The tick itself fires every ~30s
-  // so a due send lands close to its scheduled minute, but polling every thread and every inbox
-  // that often would burn Gmail API quota for no benefit — a reply or a new message noticed a
-  // minute or two later costs nothing, a send two minutes late is the bug this all exists to fix.
+  // The two Gmail-heavy passes run on their own slower cadence. While emails are going out the
+  // tick fires every ~30s so a due send lands close to its scheduled minute, but polling every
+  // thread and every inbox that often would burn Gmail API quota for no benefit — a reply or a new
+  // message noticed a minute or two later costs nothing, a send two minutes late is the bug this
+  // all exists to fix.
   const state = await getWorkerState();
   const now = Date.now();
+  // Waking from one of the long sleeps (15 min on weekdays): both passes are overdue, and the next
+  // chance to run the second one is another long sleep away — so run both while we're awake.
+  const wokeFromSleep = !state.lastRunAt || now - state.lastRunAt.getTime() > 5 * 60 * 1000;
 
-  // At most one heavy pass per tick. Both are Gmail-bound and each can take tens of seconds on a
-  // busy account; running them in the same invocation stacks their cost toward the tick route's
-  // 60s ceiling for no reason. Whichever one loses just runs on the next tick, 30s later.
+  // Otherwise at most one heavy pass per tick. Both are Gmail-bound and each can take tens of
+  // seconds on a busy account; running them in the same invocation stacks their cost toward the
+  // tick route's 60s ceiling for no reason. Whichever one loses just runs on the next tick.
   let heavyPassRan = false;
 
   let replyResults: Awaited<ReturnType<typeof runContinuousReplyCheck>> = [];
@@ -1431,23 +1543,21 @@ export async function runWorkerTick() {
   }
 
   let newMailFound = 0;
-  if (!heavyPassRan && (!state.lastInboxScanAt || now - state.lastInboxScanAt.getTime() >= INBOX_SCAN_INTERVAL_MS)) {
-    await prisma.workerHeartbeat.update({ where: { id: state.id }, data: { lastInboxScanAt: new Date() } });
+  const roomForSecondPass = wokeFromSleep && Date.now() - tickStartedAt < SECOND_HEAVY_PASS_CUTOFF_MS;
+  if ((!heavyPassRan || roomForSecondPass) && (await claimInboxScan(INBOX_SCAN_INTERVAL_MS))) {
+    const inbox = await runInboxPass();
+    newMailFound = inbox.threadsSynced;
+    replyResults.push(...inbox.replyResults);
+  }
+
+  // Once a night, trim routine history, orphaned media-kit copies and old cached email bodies so
+  // the database stays inside the free plan's storage.
+  if (Date.now() - tickStartedAt < ENRICHMENT_START_CUTOFF_MS) {
     try {
-      const synced = await syncInbox();
-      newMailFound = synced.threadsSynced;
-      if (synced.sequenceIds.length > 0) {
-        // Something happened on these tracked threads: check them first on the next reply pass, and
-        // read any that had already wrapped up right now — that's the late reply the regular check
-        // would otherwise never see.
-        await prisma.outreachSequence.updateMany({ where: { id: { in: synced.sequenceIds } }, data: { lastReplyCheckAt: null } });
-        replyResults.push(...(await runDormantReplyCheck(synced.sequenceIds)));
-      }
+      const { runNightlyHousekeeping } = await import("@/lib/housekeeping");
+      await runNightlyHousekeeping();
     } catch (err) {
-      // Same principle as the per-sequence try/catch inside runContinuousReplyCheck — a failure
-      // scanning for new mail must never take down the rest of the tick (the due-sends above
-      // already happened and shouldn't be reported as a failed tick because of this).
-      console.error("[inbox watch] tick failed:", err);
+      console.error("[housekeeping] failed:", err);
     }
   }
 
@@ -1466,6 +1576,7 @@ export async function runWorkerTick() {
   }
 
   return {
+    nextTickInSeconds: await planNextTick(),
     enrichment,
     repliesFound: replyResults.length,
     initialEmailsSent: initialEmailResults.length,

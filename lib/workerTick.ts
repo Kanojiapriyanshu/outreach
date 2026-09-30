@@ -21,6 +21,8 @@ type TickResult =
   | {
       ok: true;
       startedAt: string;
+      /** When the caller should tick next — see lib/workerCadence.ts. */
+      nextTickInSeconds: number;
       repliesFound: number;
       initialEmailsSent: number;
       actionsProcessed: number;
@@ -29,7 +31,10 @@ type TickResult =
       initialEmailResults: unknown;
       actionResults: unknown;
     }
-  | { ok: false; startedAt: string; error: string };
+  | { ok: false; startedAt: string; nextTickInSeconds: number; error: string };
+
+// After a failed tick (a Gmail or database hiccup), try again soon rather than sleeping 15 minutes.
+const RETRY_AFTER_FAILURE_SECONDS = 60;
 
 /**
  * One full tick: check every active thread for events, send due scheduled Email 1s, process due
@@ -41,12 +46,13 @@ type TickResult =
 export async function runTickWithHeartbeat(): Promise<TickResult> {
   const startedAt = new Date().toISOString();
   try {
-    const { repliesFound, initialEmailsSent, actionsProcessed, newMailFound, replyResults, initialEmailResults, actionResults } =
+    const { nextTickInSeconds, repliesFound, initialEmailsSent, actionsProcessed, newMailFound, replyResults, initialEmailResults, actionResults } =
       await runWorkerTick();
     await recordHeartbeat(true, actionsProcessed);
     return {
       ok: true,
       startedAt,
+      nextTickInSeconds,
       repliesFound,
       initialEmailsSent,
       actionsProcessed,
@@ -59,6 +65,6 @@ export async function runTickWithHeartbeat(): Promise<TickResult> {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[worker ${startedAt}] error:`, err);
     await recordHeartbeat(false, 0, message);
-    return { ok: false, startedAt, error: message };
+    return { ok: false, startedAt, nextTickInSeconds: RETRY_AFTER_FAILURE_SECONDS, error: message };
   }
 }

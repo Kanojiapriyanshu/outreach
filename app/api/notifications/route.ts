@@ -6,8 +6,10 @@ import { runTickWithHeartbeat } from "@/lib/workerTick";
 // same budget the cron tick route has.
 export const maxDuration = 60;
 
-// The external worker ticks every 30s; this much silence means it isn't running right now.
-const WORKER_SILENT_MS = 90_000;
+// The worker sleeps up to an hour when there's nothing to send (lib/workerCadence.ts), so only
+// silence longer than that means it has actually stopped. Stepping in sooner would wake the
+// database on every poll from an open tab — exactly what the long sleeps are there to avoid.
+import { WORKER_SILENT_MS } from "@/lib/workerCadence";
 // However many tabs are polling, at most one fallback tick starts in this window.
 const FALLBACK_MIN_GAP_MS = 45_000;
 

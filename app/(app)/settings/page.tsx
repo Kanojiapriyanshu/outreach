@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { RotateCw } from "lucide-react";
 import Badge from "@/app/components/Badge";
+import { WORKER_SILENT_MS } from "@/lib/workerCadence";
 
 interface EmailAccount {
   id: string;
@@ -311,14 +312,14 @@ export default function SettingsPage() {
               className="inline-block w-2 h-2 rounded-full"
               style={{
                 background:
-                  heartbeatCheckedAt - new Date(heartbeat.lastRunAt).getTime() < 15 * 60 * 1000 && heartbeat.lastRunOk
+                  heartbeatCheckedAt - new Date(heartbeat.lastRunAt).getTime() < WORKER_SILENT_MS && heartbeat.lastRunOk
                     ? "var(--success-fg)"
                     : "var(--danger-fg)",
               }}
             />
             <span className="text-[var(--ink)]">
-              {heartbeatCheckedAt - new Date(heartbeat.lastRunAt).getTime() < 15 * 60 * 1000 && heartbeat.lastRunOk
-                ? "Yes — running normally."
+              {heartbeatCheckedAt - new Date(heartbeat.lastRunAt).getTime() < WORKER_SILENT_MS && heartbeat.lastRunOk
+                ? "Yes — running normally. It sends in bursts when emails are due and otherwise checks every 15 minutes (hourly overnight and at weekends). Opening the CRM syncs Gmail straight away."
                 : "It's gone quiet — may have stopped."}{" "}
               Last checked {new Date(heartbeat.lastRunAt).toLocaleString()}.
             </span>
