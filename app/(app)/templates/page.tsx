@@ -82,7 +82,7 @@ export default function TemplatesPage() {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
-          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Email Templates</h1>
+          <h1 className="text-[24px] leading-8 font-semibold tracking-tight text-[var(--ink)]">Email Templates</h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
             These are the emails that go out automatically. Brand and creator emails are kept completely separate.
           </p>

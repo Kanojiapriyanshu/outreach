@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Copy, ExternalLink, Loader2, Mail, Users, X } from "lucide-react";
-import { brandEmailDraft, gmailComposeUrl, type LinkState } from "@/lib/pitchSheet";
+import { Check, Copy, ExternalLink, Loader2, Mail, PenLine, Users, X } from "lucide-react";
+import { LINK_CODE_LENGTH, PITCH_LINK_PREFIX, brandEmailDraft, gmailComposeUrl, slugifyLinkName, type LinkState } from "@/lib/pitchSheet";
 
 /** Row actions on the Pitch sheets tab: copy/open the link, email the brand, take creators off the
  * sheet, extend or turn it off. */
@@ -32,6 +32,35 @@ export default function PitchSheetActions({
   const [editing, setEditing] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [editError, setEditError] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const currentName = new RegExp(`/p/(.+)-[a-z2-9]{${LINK_CODE_LENGTH}}$`).exec(url)?.[1] ?? slugifyLinkName(brandName);
+  const [newName, setNewName] = useState(currentName);
+  const [renameError, setRenameError] = useState("");
+
+  async function rename() {
+    setBusy(true);
+    setRenameError("");
+    try {
+      const res = await fetch(`/api/pitch-sheets/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "rename", linkName: newName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Couldn't rename the link");
+      try {
+        await navigator.clipboard.writeText(data.url);
+      } catch {
+        // Copy is a convenience; the new link shows in the table.
+      }
+      setRenaming(false);
+      router.refresh();
+    } catch (err) {
+      setRenameError(err instanceof Error ? err.message : "Couldn't rename the link");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function removeItem(item: { id: string; name: string }) {
     if (!confirm(`Take ${item.name} off ${brandName}'s sheet? They disappear from the brand's link straight away.`)) return;
@@ -119,8 +148,50 @@ export default function PitchSheetActions({
           </div>
         </div>
       )}
+      {renaming && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 text-left">
+          <div className="absolute inset-0 bg-black/50" onClick={() => !busy && setRenaming(false)} />
+          <div className="relative card w-full max-w-md" style={{ boxShadow: "var(--shadow-pop)" }}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
+              <h3 className="font-semibold text-sm text-[var(--ink)]">Rename {brandName}&apos;s link</h3>
+              <button onClick={() => setRenaming(false)} className="p-1 rounded text-[var(--muted)] hover:text-[var(--ink)]" aria-label="Close">
+                <X size={15} />
+              </button>
+            </div>
+            <div className="px-4 py-4 space-y-3">
+              <div className="flex items-stretch rounded-[10px] border border-[var(--border)] bg-[var(--surface)] focus-within:border-[var(--brand-teal)]">
+                <span className="flex items-center pl-3 pr-1 text-xs text-[var(--muted-2)] font-mono">{PITCH_LINK_PREFIX}</span>
+                <input
+                  className="flex-1 min-w-0 bg-transparent py-2 text-sm font-mono text-[var(--ink)] outline-none"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  maxLength={60}
+                  autoFocus
+                  aria-label="New link name"
+                />
+                <span className="flex items-center pr-3 text-xs text-[var(--muted-2)] font-mono">-{"x".repeat(LINK_CODE_LENGTH)}</span>
+              </div>
+              <p className="text-xs rounded-lg px-3 py-2" style={{ background: "var(--warn-bg)", color: "var(--warn-fg)" }}>
+                The link you already sent stops working — send {brandName} the new one. It&apos;s copied for you when you save.
+              </p>
+              {renameError && <p className="text-xs" style={{ color: "var(--danger-fg)" }}>{renameError}</p>}
+            </div>
+            <div className="flex justify-end gap-2 px-4 py-3 border-t border-[var(--border)]">
+              <button onClick={() => setRenaming(false)} disabled={busy} className="btn-secondary px-3.5 py-1.5 text-xs">
+                Cancel
+              </button>
+              <button onClick={() => void rename()} disabled={busy || !slugifyLinkName(newName)} className="btn-primary inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs">
+                {busy && <Loader2 size={12} className="animate-spin" />} Save new link
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {state === "live" ? (
         <>
+          <button onClick={() => { setNewName(currentName); setRenaming(true); }} className="btn-secondary inline-flex items-center gap-1 px-2.5 py-1.5" title="Give this link a new name">
+            <PenLine size={12} /> Rename
+          </button>
           <button onClick={() => void copy()} className="btn-secondary inline-flex items-center gap-1 px-2.5 py-1.5">
             {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? "Copied" : "Copy link"}
           </button>

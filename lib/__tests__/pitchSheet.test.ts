@@ -8,6 +8,9 @@ import {
   gmailComposeUrl,
   isReadyToPitch,
   linkState,
+  pitchLinkToken,
+  pitchSheetUrl,
+  slugifyLinkName,
 } from "../pitchSheet";
 import { matchSnippet, rosterWhere, searchTerms } from "../creatorRoster";
 import { looksLikeCreatorPitch } from "../creatorPitchRule";
@@ -41,6 +44,27 @@ describe("link expiry", () => {
   it("counts whole days left", () => {
     expect(daysLeft(new Date(NOW.getTime() + 29.5 * DAY), NOW)).toBe(30);
     expect(daysLeft(null, NOW)).toBeNull();
+  });
+});
+
+describe("short brand links", () => {
+  it("turns a brand or campaign name into a clean link name", () => {
+    expect(slugifyLinkName("ChitaLiving")).toBe("chitaliving");
+    expect(slugifyLinkName("Glössier & Co. — Q4 Picks!")).toBe("glossier-and-co-q4-picks");
+    expect(slugifyLinkName("  ***  ")).toBe("");
+    expect(slugifyLinkName("a".repeat(80))).toHaveLength(40);
+  });
+
+  it("adds a short unguessable code without look-alike characters", () => {
+    const token = pitchLinkToken("Hbada Fall", new Uint8Array([0, 1, 2, 3, 4, 250]));
+    expect(token).toMatch(/^hbada-fall-[a-z2-9]{6}$/);
+    const code = token.slice("hbada-fall-".length);
+    expect(code).not.toMatch(/[01ilo]/);
+    expect(pitchLinkToken("", new Uint8Array(6))).toMatch(/^shortlist-[a-z2-9]{6}$/);
+  });
+
+  it("builds the short URL", () => {
+    expect(pitchSheetUrl("https://app.fidemgrowth.com", "hbada-k7m2qx")).toBe("https://app.fidemgrowth.com/p/hbada-k7m2qx");
   });
 });
 

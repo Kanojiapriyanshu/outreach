@@ -17,7 +17,7 @@ export default async function TrashPage() {
   return (
     <div className="space-y-7">
       <div>
-        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Trash</h1>
+        <h1 className="text-[24px] leading-8 font-semibold tracking-tight text-[var(--ink)]">Trash</h1>
         <p className="text-sm text-[var(--muted)] mt-0.5">
           Deleted threads land here first — follow-ups stay paused the whole time. Restore one, or delete it for good.
           Nothing here is ever removed from Gmail itself.

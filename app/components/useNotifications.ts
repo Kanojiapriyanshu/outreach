@@ -38,6 +38,7 @@ export function useNotifications() {
   const [threads, setThreads] = useState<UnreadThread[]>([]);
   const [alerts, setAlerts] = useState<DeliveryAlert[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [waiting, setWaiting] = useState<{ brands: number; influencers: number }>({ brands: 0, influencers: 0 });
 
   const load = useCallback(async () => {
     let since = 0;
@@ -52,6 +53,7 @@ export function useNotifications() {
       setThreads(data.unreadThreads ?? []);
       setAlerts(data.alerts ?? []);
       setUnreadCount(data.unreadCount ?? 0);
+      setWaiting(data.waiting ?? { brands: 0, influencers: 0 });
       setTitleBadge(data.unreadCount ?? 0);
     } catch {
       // A failed background poll just leaves the last known numbers in place.
@@ -65,5 +67,5 @@ export function useNotifications() {
     return () => clearInterval(interval);
   }, [load]);
 
-  return { threads, alerts, unreadCount, reload: load };
+  return { threads, alerts, unreadCount, waiting, reload: load };
 }

@@ -5,12 +5,15 @@
 }
 
 :root {
-  --bg: #f6f8fb;
+  --bg: #f4f6f9;
   --surface: #ffffff;
-  --border: #ececf1;
-  --ink: #14171f;
-  --muted: #6d727e;
-  --muted-2: #9a9ea7;
+  /* A step off --surface: table headers, inset panels, hovered rows. */
+  --surface-2: #f8f9fb;
+  --border: #e4e7ec;
+  --border-strong: #d0d5dd;
+  --ink: #101828;
+  --muted: #5d6679;
+  --muted-2: #8b93a3;
 
   --brand-teal: #157a8c;
   --brand-teal-dark: #0e5c6b;
@@ -19,37 +22,54 @@
   --brand-lime-light: #eef5d3;
   --brand-yellow: #d8c61a;
 
-  --success-bg: #e6f9ee;
-  --success-fg: #1a9d51;
+  /* Workspace accents — brands are indigo, influencers are teal, so a glance at a page's header
+     (or the nav) says which side of the business you're on. */
+  --brands-accent: #4f46e5;
+  --brands-accent-light: #eef0ff;
+  --influencers-accent: #0f8a9d;
+  --influencers-accent-light: #e1f4f7;
+
+  --success-bg: #e7f8ee;
+  --success-fg: #16803d;
   --warn-bg: #fdf3d8;
-  --warn-fg: #9c7a08;
-  --danger-bg: #fde8e8;
-  --danger-fg: #c62828;
-  --neutral-bg: #eef0f3;
-  --neutral-fg: #565a63;
-  --info-bg: #e8f0fe;
-  --info-fg: #1c5cc5;
+  --warn-fg: #8f6c05;
+  --danger-bg: #fdecec;
+  --danger-fg: #c42b2b;
+  --neutral-bg: #eef0f4;
+  --neutral-fg: #4d5566;
+  --info-bg: #e9f0ff;
+  --info-fg: #1f56c2;
 
   /* Text color for content sitting on an --ink-colored background (e.g. the active dashboard
      tab pill) — always the inverse of --ink, in both themes. */
   --ink-inverse: #ffffff;
 
-  --stage-first-bg: #c9f7ef;
+  /* The sidebar is dark in both themes — the fixed frame the work happens inside. */
+  --sidebar-bg: #0b1320;
+  --sidebar-border: rgba(255, 255, 255, 0.07);
+  --sidebar-ink: #e7ebf2;
+  --sidebar-muted: #8d97a8;
+  --sidebar-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-active: rgba(126, 232, 216, 0.12);
+  --sidebar-active-ink: #7ee8d8;
+
+  --stage-first-bg: #d4f5ef;
   --stage-first-fg: #0a5c50;
-  --stage-creatorlist-bg: #fff3b0;
+  --stage-creatorlist-bg: #fff2bf;
   --stage-creatorlist-fg: #7a5c00;
-  --stage-negotiation-bg: #3b5bdb;
-  --stage-negotiation-fg: #ffffff;
-  --stage-creatorselected-bg: #2f9e44;
-  --stage-creatorselected-fg: #ffffff;
-  --stage-notinterested-bg: #e03131;
-  --stage-notinterested-fg: #ffffff;
-  --stage-deal-bg: #862e2e;
+  --stage-negotiation-bg: #e0e7ff;
+  --stage-negotiation-fg: #3730a3;
+  --stage-creatorselected-bg: #d9f5e1;
+  --stage-creatorselected-fg: #166534;
+  --stage-notinterested-bg: #fde4e4;
+  --stage-notinterested-fg: #b42318;
+  --stage-deal-bg: #14532d;
   --stage-deal-fg: #ffffff;
 
-  --radius-card: 14px;
+  --radius-card: 12px;
   --radius-pill: 999px;
-  --shadow-card: 0 1px 2px rgba(20, 23, 31, 0.04), 0 1px 12px rgba(20, 23, 31, 0.03);
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-pop: 0 12px 32px -8px rgba(16, 24, 40, 0.18), 0 4px 8px -4px rgba(16, 24, 40, 0.08);
 }
 
 /* Gmail-dark-mode-inspired palette. Applied when the user picks "Dark" (persisted in
@@ -57,95 +77,122 @@
    init script) or, absent an explicit choice, when the OS prefers dark. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #131314;
-    --surface: #1e1f20;
-    --border: #3c4043;
+    --bg: #111213;
+    --surface: #1b1c1e;
+    --surface-2: #202124;
+    --border: #33363a;
+    --border-strong: #45494f;
     --ink: #e8eaed;
     --ink-inverse: #131314;
-    --muted: #9aa0a6;
-    --muted-2: #80868b;
+    --muted: #a0a6ae;
+    --muted-2: #7f868f;
 
     --brand-teal: #4fd8c4;
     --brand-teal-dark: #7ee8d8;
-    --brand-teal-light: rgba(79, 216, 196, 0.16);
+    --brand-teal-light: rgba(79, 216, 196, 0.14);
     --brand-lime: #c3e88d;
     --brand-lime-light: rgba(195, 232, 141, 0.14);
     --brand-yellow: #f4d35e;
 
-    --success-bg: rgba(74, 222, 128, 0.16);
+    --brands-accent: #a5b4fc;
+    --brands-accent-light: rgba(165, 180, 252, 0.14);
+    --influencers-accent: #7ee8d8;
+    --influencers-accent-light: rgba(126, 232, 216, 0.14);
+
+    --success-bg: rgba(74, 222, 128, 0.14);
     --success-fg: #6ee7a0;
-    --warn-bg: rgba(251, 191, 36, 0.18);
+    --warn-bg: rgba(251, 191, 36, 0.16);
     --warn-fg: #fbbf24;
-    --danger-bg: rgba(248, 113, 113, 0.16);
+    --danger-bg: rgba(248, 113, 113, 0.14);
     --danger-fg: #f87171;
-    --neutral-bg: #2a2b2d;
+    --neutral-bg: #2a2c2f;
     --neutral-fg: #b0b3b8;
-    --info-bg: rgba(138, 180, 248, 0.16);
+    --info-bg: rgba(138, 180, 248, 0.14);
     --info-fg: #8ab4f8;
 
-    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 12px rgba(0, 0, 0, 0.35);
+    --sidebar-bg: #0c0d0e;
+    --sidebar-border: rgba(255, 255, 255, 0.06);
 
-    --stage-first-bg: rgba(79, 216, 196, 0.18);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-pop: 0 12px 32px -8px rgba(0, 0, 0, 0.7), 0 4px 8px -4px rgba(0, 0, 0, 0.5);
+
+    --stage-first-bg: rgba(79, 216, 196, 0.16);
     --stage-first-fg: #7ee8d8;
-    --stage-creatorlist-bg: rgba(244, 211, 94, 0.2);
+    --stage-creatorlist-bg: rgba(244, 211, 94, 0.18);
     --stage-creatorlist-fg: #f4d35e;
-    --stage-negotiation-bg: #3b5bdb;
-    --stage-negotiation-fg: #ffffff;
-    --stage-creatorselected-bg: #2f9e44;
-    --stage-creatorselected-fg: #ffffff;
-    --stage-notinterested-bg: #e03131;
-    --stage-notinterested-fg: #ffffff;
-    --stage-deal-bg: #a13d3d;
+    --stage-negotiation-bg: rgba(165, 180, 252, 0.18);
+    --stage-negotiation-fg: #c7d2fe;
+    --stage-creatorselected-bg: rgba(74, 222, 128, 0.16);
+    --stage-creatorselected-fg: #86efac;
+    --stage-notinterested-bg: rgba(248, 113, 113, 0.16);
+    --stage-notinterested-fg: #fca5a5;
+    --stage-deal-bg: #15803d;
     --stage-deal-fg: #ffffff;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #131314;
-  --surface: #1e1f20;
-  --border: #3c4043;
+  --bg: #111213;
+  --surface: #1b1c1e;
+  --surface-2: #202124;
+  --border: #33363a;
+  --border-strong: #45494f;
   --ink: #e8eaed;
-  --muted: #9aa0a6;
-  --muted-2: #80868b;
+  --ink-inverse: #131314;
+  --muted: #a0a6ae;
+  --muted-2: #7f868f;
 
   --brand-teal: #4fd8c4;
   --brand-teal-dark: #7ee8d8;
-  --brand-teal-light: rgba(79, 216, 196, 0.16);
+  --brand-teal-light: rgba(79, 216, 196, 0.14);
   --brand-lime: #c3e88d;
   --brand-lime-light: rgba(195, 232, 141, 0.14);
   --brand-yellow: #f4d35e;
 
-  --success-bg: rgba(74, 222, 128, 0.16);
+  --brands-accent: #a5b4fc;
+  --brands-accent-light: rgba(165, 180, 252, 0.14);
+  --influencers-accent: #7ee8d8;
+  --influencers-accent-light: rgba(126, 232, 216, 0.14);
+
+  --success-bg: rgba(74, 222, 128, 0.14);
   --success-fg: #6ee7a0;
-  --warn-bg: rgba(251, 191, 36, 0.18);
+  --warn-bg: rgba(251, 191, 36, 0.16);
   --warn-fg: #fbbf24;
-  --danger-bg: rgba(248, 113, 113, 0.16);
+  --danger-bg: rgba(248, 113, 113, 0.14);
   --danger-fg: #f87171;
-  --neutral-bg: #2a2b2d;
+  --neutral-bg: #2a2c2f;
   --neutral-fg: #b0b3b8;
-  --info-bg: rgba(138, 180, 248, 0.16);
+  --info-bg: rgba(138, 180, 248, 0.14);
   --info-fg: #8ab4f8;
 
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 12px rgba(0, 0, 0, 0.35);
+  --sidebar-bg: #0c0d0e;
+  --sidebar-border: rgba(255, 255, 255, 0.06);
 
-  --stage-first-bg: rgba(79, 216, 196, 0.18);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 12px 32px -8px rgba(0, 0, 0, 0.7), 0 4px 8px -4px rgba(0, 0, 0, 0.5);
+
+  --stage-first-bg: rgba(79, 216, 196, 0.16);
   --stage-first-fg: #7ee8d8;
-  --stage-creatorlist-bg: rgba(244, 211, 94, 0.2);
+  --stage-creatorlist-bg: rgba(244, 211, 94, 0.18);
   --stage-creatorlist-fg: #f4d35e;
-  --stage-negotiation-bg: #3b5bdb;
-  --stage-negotiation-fg: #ffffff;
-  --stage-creatorselected-bg: #2f9e44;
-  --stage-creatorselected-fg: #ffffff;
-  --stage-notinterested-bg: #e03131;
-  --stage-notinterested-fg: #ffffff;
-  --stage-deal-bg: #a13d3d;
+  --stage-negotiation-bg: rgba(165, 180, 252, 0.18);
+  --stage-negotiation-fg: #c7d2fe;
+  --stage-creatorselected-bg: rgba(74, 222, 128, 0.16);
+  --stage-creatorselected-fg: #86efac;
+  --stage-notinterested-bg: rgba(248, 113, 113, 0.16);
+  --stage-notinterested-fg: #fca5a5;
+  --stage-deal-bg: #15803d;
   --stage-deal-fg: #ffffff;
 }
 
 body {
   background: var(--bg);
   color: var(--ink);
+  font-feature-settings: "cv11", "ss01";
 }
 
+/* Component classes live in a layer so Tailwind utilities on the same element win — "input pl-9" or
+   "btn-secondary px-2.5" then do what they say instead of being silently overridden. */
+@layer components {
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -156,31 +203,42 @@ body {
 .btn-primary {
   background: var(--brand-teal);
   color: #fff;
-  border-radius: var(--radius-pill);
+  border-radius: 8px;
   font-weight: 600;
-  transition: background-color 0.15s ease;
+  transition: background-color 0.15s ease, filter 0.15s ease;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
 }
 .btn-primary:hover {
   /* Not var(--brand-teal-dark) — that variable means "brighter, for text on a dark background"
      in dark mode, which would lighten this button instead of darkening it on hover. A relative
      brightness filter darkens correctly in both themes without needing a second color per mode. */
-  filter: brightness(0.88);
+  filter: brightness(0.9);
 }
 .btn-primary:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+:root[data-theme="dark"] .btn-primary {
+  color: #0b1320;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .btn-primary {
+    color: #0b1320;
+  }
 }
 
 .btn-secondary {
   background: var(--surface);
   color: var(--ink);
   border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
+  border-radius: 8px;
   font-weight: 500;
-  transition: background-color 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
 }
 .btn-secondary:hover {
-  background: var(--bg);
+  background: var(--surface-2);
+  border-color: var(--border-strong);
 }
 .btn-secondary:disabled {
   opacity: 0.4;
@@ -190,8 +248,8 @@ body {
 .btn-danger {
   background: var(--surface);
   color: var(--danger-fg);
-  border: 1px solid #f3d4d4;
-  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   font-weight: 500;
 }
 .btn-danger:hover {
@@ -205,17 +263,19 @@ body {
 .badge {
   display: inline-flex;
   align-items: center;
-  border-radius: var(--radius-pill);
-  font-size: 12px;
+  gap: 4px;
+  border-radius: 6px;
+  font-size: 11.5px;
   font-weight: 600;
-  padding: 3px 10px;
+  padding: 2px 8px;
+  line-height: 18px;
   white-space: nowrap;
 }
 
 .input {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 8px 12px;
   font-size: 14px;
   line-height: 1.4;
@@ -225,6 +285,10 @@ body {
      same row height throughout the app — mismatched control heights next to each other is one of
      the more common "the design feels inconsistent" tells, even when colors match. */
   min-height: 38px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.input:hover {
+  border-color: var(--border-strong);
 }
 .input:focus {
   outline: none;
@@ -269,4 +333,54 @@ input[type="radio"] {
   height: 16px;
   cursor: pointer;
   flex-shrink: 0;
+}
+
+/* Data tables — one look for every list in the app. Header on a tinted band, quiet uppercase
+   labels, a hover row, and numbers that line up. */
+.data-table {
+  width: 100%;
+  font-size: 13.5px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.data-table thead th {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.data-table tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.data-table tbody tr {
+  transition: background-color 0.12s ease;
+}
+.data-table tbody tr:hover {
+  background: var(--surface-2);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Slim scrollbars inside the app chrome. */
+.scroll-slim::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background: rgba(140, 150, 165, 0.35);
+  border-radius: 8px;
+}
 }

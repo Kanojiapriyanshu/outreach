@@ -327,7 +327,7 @@ function TrackPageInner() {
     <div className="max-w-2xl space-y-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
-          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Start a New Outreach</h1>
+          <h1 className="text-[24px] leading-8 font-semibold tracking-tight text-[var(--ink)]">Start a New Outreach</h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
             {mode === "compose"
               ? "Write the first email here and we'll send it and handle the reminders — or use the other tabs if you'd rather send it yourself from Gmail first."

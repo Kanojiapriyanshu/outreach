@@ -49,7 +49,7 @@ export default function NotificationsBell({
       <button
         onClick={toggleOpen}
         aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
-        className="relative p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)] transition-colors"
+        className="relative p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)] transition-colors"
       >
         <Bell size={17} strokeWidth={2} />
         {unreadCount > 0 && (
@@ -66,8 +66,8 @@ export default function NotificationsBell({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
-            className={`absolute ${align === "left" ? "left-0" : "right-0"} top-full mt-2 w-[21rem] max-w-[90vw] max-h-[28rem] overflow-y-auto card p-2 z-50 shadow-xl`}
-            style={{ boxShadow: "var(--shadow-card)" }}
+            className={`absolute ${align === "left" ? "left-0" : "right-0"} top-full mt-2 w-[21rem] max-w-[90vw] max-h-[28rem] overflow-y-auto card p-2 z-50`}
+            style={{ boxShadow: "var(--shadow-pop)" }}
           >
             {alerts.length > 0 && (
               <>

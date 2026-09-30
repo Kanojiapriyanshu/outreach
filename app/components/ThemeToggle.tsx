@@ -9,7 +9,7 @@ function getSystemTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-export default function ThemeToggle() {
+export default function ThemeToggle({ compact = false }: { compact?: boolean }) {
   // Starts null so the server-rendered markup and the first client render match (avoids a
   // hydration mismatch) — the real value is read from localStorage/OS right after mount.
   const [theme, setTheme] = useState<Theme | null>(null);
@@ -30,6 +30,19 @@ export default function ThemeToggle() {
   }
 
   const isDark = theme === "dark";
+
+  if (compact) {
+    return (
+      <button
+        onClick={toggle}
+        aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+        title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+        className="p-2 rounded-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)] transition-colors"
+      >
+        {isDark ? <Sun size={17} strokeWidth={2} /> : <Moon size={17} strokeWidth={2} />}
+      </button>
+    );
+  }
 
   return (
     <button

@@ -1,8 +1,7 @@
-import { randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { expiryFromDays } from "@/lib/pitchSheet";
-import { appBaseUrl, creatorEligibility } from "@/lib/pitchSheetServer";
+import { expiryFromDays, pitchSheetUrl } from "@/lib/pitchSheet";
+import { appBaseUrl, creatorEligibility, uniquePitchToken } from "@/lib/pitchSheetServer";
 
 const MAX_CREATORS = 200;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -10,6 +9,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 interface CreateBody {
   brandName?: string;
   brandEmail?: string;
+  /** The readable part of the link — defaults to the brand name. */
+  linkName?: string;
   title?: string;
   intro?: string;
   expiresInDays?: number;
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest) {
 
   const sheet = await prisma.pitchSheet.create({
     data: {
-      token: randomBytes(24).toString("base64url"),
+      token: await uniquePitchToken(clean(body.linkName, 120) ?? brandName),
       title: clean(body.title, 160) ?? `Creator shortlist for ${brandName}`,
       brandName,
       brandEmail,
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
   const base = appBaseUrl(req.nextUrl.origin);
   return NextResponse.json({
     id: sheet.id,
-    url: `${base}/pitch-sheet/${sheet.token}`,
+    url: pitchSheetUrl(base, sheet.token),
     csvUrl: `${base}/api/pitch-sheets/public/${sheet.token}/csv`,
     expiresAt: sheet.expiresAt?.toISOString() ?? null,
     included: included.length,

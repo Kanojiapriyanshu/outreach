@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { Plus, Download, ExternalLink, MessageSquareReply } from "lucide-react";
+import { Plus, Download, ExternalLink, MessageSquareReply, Megaphone } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime } from "@/lib/formatDate";
 import { StageBadge } from "@/app/components/Badge";
@@ -15,8 +15,9 @@ import {
   type InfluencerView,
 } from "@/lib/influencerOutreach";
 import type { Prisma } from "@/app/generated/prisma/client";
-import InfluencerSearch from "./InfluencerSearch";
-import MarkHandledButton from "./MarkHandledButton";
+import { Avatar, EmptyState, Kpi, KpiGrid, PageHeader, Pager, SendDots, ViewPills } from "@/app/components/ui";
+import ListSearch from "@/app/components/ListSearch";
+import MarkHandledButton from "@/app/components/MarkHandledButton";
 import InfluencerTabs from "./InfluencerTabs";
 
 // Reply and follow-up state changes every worker tick — never serve a cached copy.
@@ -79,348 +80,229 @@ export default async function InfluencerOutreachPage({
   const replyRate = total > 0 ? (replied / total) * 100 : 0;
   const medianUsd = median(usdRates.map((r) => r.quotedRateAmount!));
   const stepCount = (step: number) => repliedSteps.find((s) => s.repliedAfterStep === step)?._count ?? 0;
+  const viewHref = (key: string, extra: Record<string, string> = {}) => {
+    const params = new URLSearchParams({ ...(key !== "all" ? { view: key } : {}), ...(q ? { q } : {}), ...extra });
+    return `/influencers${params.size ? `?${params.toString()}` : ""}`;
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Influencer Outreach</h1>
-          <p className="text-sm text-[var(--muted)] mt-0.5">
-            Every creator you&apos;ve pitched — who replied, what they quoted, and who&apos;s still being followed up.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <a
-            href={`/api/influencers/export?${new URLSearchParams({ view, ...(q ? { q } : {}) }).toString()}`}
-            className="btn-secondary inline-flex items-center gap-1.5 px-3.5 py-2.5 text-sm"
-          >
-            <Download size={15} /> Export CSV
-          </a>
-          <Link href="/track?outreachType=CREATOR" className="btn-primary inline-flex items-center gap-1.5 px-4 py-2.5 text-sm">
-            <Plus size={16} /> Pitch a Creator
-          </Link>
-        </div>
-      </div>
+      <PageHeader
+        workspace="influencers"
+        section="Outreach"
+        title="Influencer outreach"
+        description="Every creator you've pitched — who replied, what they quoted, and who's still being followed up."
+        actions={
+          <>
+            <a href={`/api/influencers/export?${new URLSearchParams({ view, ...(q ? { q } : {}) }).toString()}`} className="btn-secondary inline-flex items-center gap-1.5 px-3.5 py-2 text-sm">
+              <Download size={15} /> Export
+            </a>
+            <Link href="/track?outreachType=CREATOR" className="btn-primary inline-flex items-center gap-1.5 px-3.5 py-2 text-sm">
+              <Plus size={16} /> Pitch a creator
+            </Link>
+          </>
+        }
+      />
 
-      <InfluencerTabs active="outreach" />
+      <InfluencerTabs active="outreach" counts={{ outreach: countFor("needs-response") }} />
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="Creators contacted" value={total} href="/influencers" />
-        <StatCard label={`Replied · ${replyRate.toFixed(0)}% reply rate`} value={replied} />
-        <StatCard
-          label="Need your reply"
+      <KpiGrid columns={5}>
+        <Kpi label="Creators contacted" value={total} href="/influencers" hint={`${countFor("following-up")} still being followed up`} />
+        <Kpi label="Replied" value={replied} hint={`${replyRate.toFixed(0)}% reply rate`} />
+        <Kpi
+          label="Needs your reply"
           value={countFor("needs-response")}
-          href="/influencers?view=needs-response"
+          href={viewHref("needs-response")}
           tone={countFor("needs-response") > 0 ? "accent" : "default"}
+          hint={countFor("needs-response") > 0 ? "Oldest first in the list below" : "You're all caught up"}
         />
-        <StatCard
-          label={medianUsd !== null ? `Rates received · median ${formatMoney(medianUsd, "USD")}` : "Rates received"}
+        <Kpi
+          label="Rates received"
           value={countFor("rates")}
-          href="/influencers?view=rates"
+          href={viewHref("rates")}
+          tone={countFor("rates") > 0 ? "success" : "default"}
+          hint={medianUsd !== null ? `Median ${formatMoney(medianUsd, "USD")}` : undefined}
         />
-        <StatCard label="Still following up" value={countFor("following-up")} href="/influencers?view=following-up" />
-        <StatCard label="No reply after all follow-ups" value={countFor("no-reply")} href="/influencers?view=no-reply" />
-        <StatCard label="Declined or opted out" value={countFor("declined")} href="/influencers?view=declined" />
-        <StatCard label="Bounced" value={countFor("bounced")} href="/influencers?view=bounced" />
-      </div>
+        <Kpi label="Interested, no rate yet" value={countFor("interested")} href={viewHref("interested")} hint={`${countFor("declined")} declined · ${countFor("bounced")} bounced`} />
+      </KpiGrid>
 
       {replied > 0 && (
-        <div className="card px-5 py-3.5 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+        <div className="card px-5 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
           <span className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">First replied after</span>
           {STEP_LABELS.map((label, step) => (
             <span key={label} className="text-[var(--muted)]">
-              {label}: <span className="font-semibold text-[var(--ink)]">{stepCount(step)}</span>
+              {label} <span className="font-semibold text-[var(--ink)] tabular">{stepCount(step)}</span>
             </span>
           ))}
+          <Link href={viewHref("no-reply")} className="ml-auto text-xs text-[var(--muted)] hover:text-[var(--ink)]">
+            {countFor("no-reply")} never replied →
+          </Link>
         </div>
       )}
 
       <div className="flex flex-col lg:flex-row lg:items-center gap-3 justify-between">
-        <div className="flex gap-1.5 flex-wrap">
-          {INFLUENCER_VIEWS.map((v) => {
-            const active = v.key === view;
-            const params = new URLSearchParams({ ...(v.key !== "all" ? { view: v.key } : {}), ...(q ? { q } : {}) });
-            return (
-              <Link
-                key={v.key}
-                href={`/influencers${params.size ? `?${params.toString()}` : ""}`}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full transition-colors"
-                style={
-                  active
-                    ? { background: "var(--ink)", color: "var(--ink-inverse)" }
-                    : { background: "var(--neutral-bg)", color: "var(--neutral-fg)" }
-                }
-              >
-                {v.label}
-                <span className="opacity-70">{countFor(v.key)}</span>
-              </Link>
-            );
-          })}
-        </div>
+        <ViewPills active={view} items={INFLUENCER_VIEWS.map((v) => ({ key: v.key, label: v.label, count: countFor(v.key), href: viewHref(v.key) }))} />
         <Suspense fallback={<div className="h-10" />}>
-          <InfluencerSearch />
+          <ListSearch placeholder="Search creator, channel or email…" />
         </Suspense>
       </div>
 
-      <div className="card overflow-hidden overflow-x-auto">
-        <table className="w-full text-sm min-w-[860px]">
-          <thead className="text-[var(--muted)] text-left">
-            <tr className="border-b border-[var(--border)]">
-              <Th>Creator</Th>
-              <Th>Emails sent</Th>
-              <Th>Their reply</Th>
-              <Th>Rate</Th>
-              <Th>Stage</Th>
-              <Th>Next</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {sequences.length === 0 && (
+      <div className="card overflow-hidden overflow-x-auto scroll-slim">
+        {sequences.length === 0 ? (
+          <EmptyState
+            icon={<Megaphone size={18} />}
+            title={total === 0 ? "No creators pitched yet" : "Nobody matches this view"}
+            body={total === 0 ? "Pitch a creator, or use Start Outreach from Discovery — replies and rates show up here." : "Try another filter, or clear the search."}
+            action={
+              total === 0 ? (
+                <Link href="/track?outreachType=CREATOR" className="btn-primary inline-flex items-center gap-1.5 px-3.5 py-2 text-sm">
+                  <Plus size={15} /> Pitch a creator
+                </Link>
+              ) : undefined
+            }
+          />
+        ) : (
+          <table className="data-table table-fixed min-w-[1000px]">
+            <colgroup>
+              <col style={{ width: "24%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "30%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "11%" }} />
+            </colgroup>
+            <thead>
               <tr>
-                <td colSpan={6} className="px-5 py-14 text-center text-[var(--muted-2)] text-sm">
-                  {total === 0 ? (
-                    <>
-                      No creators pitched yet —{" "}
-                      <Link href="/track?outreachType=CREATOR" className="underline">
-                        send the first one
-                      </Link>{" "}
-                      or use Start Outreach from Discovery.
-                    </>
-                  ) : (
-                    "Nobody matches this filter."
-                  )}
-                </td>
+                <th>Creator</th>
+                <th>Emails</th>
+                <th>Their reply</th>
+                <th>Rate</th>
+                <th>Stage</th>
+                <th>Next</th>
               </tr>
-            )}
-            {sequences.map((seq) => {
-              const creator = seq.contact.creator;
-              const awaiting = !!seq.awaitingResponseSince;
-              const systemSends = seq.messages.filter((m) => m.source === "SYSTEM");
-              const manualSends = seq.messages.length - systemSends.length;
-              const rates = parseStoredRates(seq.quotedRates);
-              const hasReplied = !!seq.lastReplyAt || seq.status === "REPLIED" || seq.status === "UNSUBSCRIBED";
-              const pending = seq.scheduledActions[0];
+            </thead>
+            <tbody>
+              {sequences.map((seq) => {
+                const creator = seq.contact.creator;
+                const awaiting = !!seq.awaitingResponseSince;
+                const systemSends = seq.messages.filter((m) => m.source === "SYSTEM");
+                const manualSends = seq.messages.length - systemSends.length;
+                const rates = parseStoredRates(seq.quotedRates);
+                const hasReplied = !!seq.lastReplyAt || seq.status === "REPLIED" || seq.status === "UNSUBSCRIBED";
+                const pending = seq.scheduledActions[0];
+                const name = creator?.name ?? seq.contact.name;
 
-              return (
-                <tr
-                  key={seq.id}
-                  className="border-b border-[var(--border)] last:border-0 align-top transition-colors hover:bg-[var(--bg)]"
-                  style={awaiting ? { background: "var(--brand-teal-light)", boxShadow: "inset 3px 0 0 var(--brand-teal)" } : undefined}
-                >
-                  <td className="px-4 py-3.5">
-                    <div className="flex items-start gap-2.5 min-w-[190px]">
-                      {creator?.thumbnailUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element -- remote YouTube avatar, same as Discovery
-                        <img src={creator.thumbnailUrl} alt="" className="w-8 h-8 rounded-full shrink-0 object-cover" />
-                      ) : (
-                        <div
-                          className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-xs font-semibold"
-                          style={{ background: "var(--neutral-bg)", color: "var(--neutral-fg)" }}
-                        >
-                          {(creator?.name ?? seq.contact.name).slice(0, 1).toUpperCase()}
-                        </div>
-                      )}
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <Link href={`/dashboard/${seq.id}`} className="font-medium text-[var(--ink)] hover:text-[var(--brand-teal)] truncate">
-                            {creator?.name ?? seq.contact.name}
-                          </Link>
-                          {creator?.channelUrl && (
-                            <a
-                              href={creator.channelUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[var(--muted-2)] hover:text-[var(--ink)] shrink-0"
-                              title="Open channel"
-                            >
-                              <ExternalLink size={12} />
-                            </a>
-                          )}
-                        </div>
-                        <div className="text-xs text-[var(--muted-2)] truncate">{seq.contact.email}</div>
-                        {creator?.subscriberCount != null && (
-                          <div className="text-xs text-[var(--muted-2)]">{creator.subscriberCount.toLocaleString("en-US")} subscribers</div>
-                        )}
-                      </div>
-                    </div>
-                  </td>
-
-                  <td className="px-4 py-3.5">
-                    <div className="flex items-center gap-1" aria-label={`${systemSends.length} automated emails sent`}>
-                      {STEP_LABELS.map((label, i) => {
-                        const sent = systemSends[i];
-                        return (
-                          <span
-                            key={label}
-                            title={sent ? `${label} — sent ${formatDateTime(sent.sentAt)}` : `${label} — not sent`}
-                            className="w-2.5 h-2.5 rounded-full"
-                            style={{
-                              background: sent ? "var(--brand-teal)" : "transparent",
-                              border: `1.5px solid ${sent ? "var(--brand-teal)" : "var(--border)"}`,
-                            }}
-                          />
-                        );
-                      })}
-                    </div>
-                    <div className="text-xs text-[var(--muted-2)] mt-1.5 whitespace-nowrap">
-                      {systemSends.length <= 1
-                        ? "Email 1 only"
-                        : `Email 1 + ${Math.min(systemSends.length - 1, 3)} follow-up${systemSends.length > 2 ? "s" : ""}`}
-                      {systemSends.length > 4 && ` + ${systemSends.length - 4} check-in${systemSends.length > 5 ? "s" : ""}`}
-                    </div>
-                    {manualSends > 0 && (
-                      <div className="text-xs text-[var(--muted-2)] whitespace-nowrap">
-                        You wrote {manualSends}×
-                      </div>
-                    )}
-                  </td>
-
-                  <td className="px-4 py-3.5 max-w-[320px]">
-                    {hasReplied ? (
-                      <>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {awaiting && (
-                            <span className="badge inline-flex items-center gap-1" style={{ background: "var(--brand-teal)", color: "#fff" }}>
-                              <MessageSquareReply size={11} /> Needs your reply
-                            </span>
-                          )}
-                          <span className="text-xs font-medium text-[var(--ink)]">{replyIntentLabel(seq.replyIntent)}</span>
-                          {seq.lastReplyAt && <span className="text-xs text-[var(--muted-2)]">{formatDateTime(seq.lastReplyAt)}</span>}
-                        </div>
-                        {(seq.replySummary || seq.lastReplyText) && (
-                          <p className="text-xs text-[var(--muted)] mt-1 line-clamp-2 break-words">
-                            {seq.replySummary ?? seq.lastReplyText}
-                          </p>
-                        )}
-                        {/* Kept beside the reply rather than in a trailing column, which a laptop-width
-                            table scrolls out of view. */}
-                        {awaiting && (
-                          <div className="mt-2">
-                            <MarkHandledButton sequenceId={seq.id} compact />
+                return (
+                  <tr key={seq.id} style={awaiting ? { background: "var(--influencers-accent-light)", boxShadow: "inset 3px 0 0 var(--influencers-accent)" } : undefined}>
+                    <td>
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <Avatar name={name} src={creator?.thumbnailUrl} />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <Link href={`/dashboard/${seq.id}`} className="font-medium text-[var(--ink)] hover:text-[var(--brand-teal)] truncate">
+                              {name}
+                            </Link>
+                            {creator?.channelUrl && (
+                              <a href={creator.channelUrl} target="_blank" rel="noopener noreferrer" className="text-[var(--muted-2)] hover:text-[var(--ink)] shrink-0" title="Open channel">
+                                <ExternalLink size={12} />
+                              </a>
+                            )}
                           </div>
-                        )}
-                      </>
-                    ) : seq.status === "BOUNCED" ? (
-                      <span className="text-xs" style={{ color: "var(--danger-fg)" }}>Email bounced</span>
-                    ) : seq.status === "COMPLETED" ? (
-                      <span className="text-xs text-[var(--muted-2)]">No reply — all follow-ups sent</span>
-                    ) : (
-                      <span className="text-xs text-[var(--muted-2)]">No reply yet</span>
-                    )}
-                  </td>
-
-                  <td className="px-4 py-3.5">
-                    {seq.quotedRateAmount !== null ? (
-                      <div className="whitespace-nowrap">
-                        <div className="font-semibold text-[var(--ink)]">
-                          {formatRate({ amount: seq.quotedRateAmount, amountMax: rates[0]?.amountMax ?? null, currency: seq.quotedRateCurrency, deliverable: null }, false)}
-                        </div>
-                        <div className="text-xs text-[var(--muted-2)]">
-                          {rates.find((r) => r.amount === seq.quotedRateAmount)?.deliverable ?? "Deliverable not stated"}
-                          {rates.length > 1 && ` · +${rates.length - 1} more`}
+                          <div className="text-xs text-[var(--muted-2)] truncate">{seq.contact.email}</div>
+                          {creator?.subscriberCount != null && (
+                            <div className="text-xs text-[var(--muted-2)] tabular">{creator.subscriberCount.toLocaleString("en-US")} subscribers</div>
+                          )}
                         </div>
                       </div>
-                    ) : seq.rateNote ? (
-                      <span className="text-xs text-[var(--ink)]">Rate card shared</span>
-                    ) : (
-                      <span className="text-[var(--muted-2)]">—</span>
-                    )}
-                  </td>
+                    </td>
 
-                  <td className="px-4 py-3.5 whitespace-nowrap">
-                    <StageBadge stage={seq.stage} />
-                  </td>
+                    <td>
+                      <SendDots sent={systemSends} labels={STEP_LABELS} />
+                      <div className="text-xs text-[var(--muted-2)] mt-1.5 whitespace-nowrap">
+                        {systemSends.length <= 1 ? "Email 1 only" : `Email 1 + ${Math.min(systemSends.length - 1, 3)} follow-up${systemSends.length > 2 ? "s" : ""}`}
+                        {systemSends.length > 4 && ` + ${systemSends.length - 4} check-in${systemSends.length > 5 ? "s" : ""}`}
+                      </div>
+                      {manualSends > 0 && <div className="text-xs text-[var(--muted-2)] whitespace-nowrap">You wrote {manualSends}×</div>}
+                    </td>
 
-                  <td className="px-4 py-3.5 text-xs text-[var(--muted)] whitespace-nowrap">
-                    {pending ? (
-                      <>
-                        <div className="text-[var(--ink)]">
-                          {pending.kind === "TEMPLATE" ? `Follow-up #${pending.step}` : `Check-in #${pending.step}`}
+                    <td>
+                      {hasReplied ? (
+                        <>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {awaiting && (
+                              <span className="badge" style={{ background: "var(--influencers-accent)", color: "#fff" }}>
+                                <MessageSquareReply size={11} /> Needs your reply
+                              </span>
+                            )}
+                            <span className="text-xs font-medium text-[var(--ink)]">{replyIntentLabel(seq.replyIntent)}</span>
+                            {seq.lastReplyAt && <span className="text-xs text-[var(--muted-2)]">{formatDateTime(seq.lastReplyAt)}</span>}
+                          </div>
+                          {(seq.replySummary || seq.lastReplyText) && (
+                            <p className="text-xs text-[var(--muted)] mt-1 line-clamp-2 break-words">{seq.replySummary ?? seq.lastReplyText}</p>
+                          )}
+                          {awaiting && (
+                            <div className="mt-2">
+                              <MarkHandledButton sequenceId={seq.id} compact />
+                            </div>
+                          )}
+                        </>
+                      ) : seq.status === "BOUNCED" ? (
+                        <span className="text-xs" style={{ color: "var(--danger-fg)" }}>
+                          Email bounced
+                        </span>
+                      ) : seq.status === "COMPLETED" ? (
+                        <span className="text-xs text-[var(--muted-2)]">No reply — all follow-ups sent</span>
+                      ) : (
+                        <span className="text-xs text-[var(--muted-2)]">No reply yet</span>
+                      )}
+                    </td>
+
+                    <td>
+                      {seq.quotedRateAmount !== null ? (
+                        <div>
+                          <div className="font-semibold text-[var(--ink)] tabular">
+                            {formatRate({ amount: seq.quotedRateAmount, amountMax: rates[0]?.amountMax ?? null, currency: seq.quotedRateCurrency, deliverable: null }, false)}
+                          </div>
+                          <div className="text-xs text-[var(--muted-2)]">
+                            {rates.find((r) => r.amount === seq.quotedRateAmount)?.deliverable ?? "Deliverable not stated"}
+                            {rates.length > 1 && ` · +${rates.length - 1} more`}
+                          </div>
                         </div>
-                        <div>{formatDateTime(pending.scheduledAt)}</div>
-                      </>
-                    ) : seq.status === "PAUSED" ? (
-                      "Paused"
-                    ) : hasReplied ? (
-                      "Follow-ups stopped"
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                      ) : seq.rateNote ? (
+                        <span className="text-xs text-[var(--ink)]">Rate card shared</span>
+                      ) : (
+                        <span className="text-[var(--muted-2)]">—</span>
+                      )}
+                    </td>
+
+                    <td>
+                      <StageBadge stage={seq.stage} />
+                    </td>
+
+                    <td className="text-xs text-[var(--muted)]">
+                      {pending ? (
+                        <>
+                          <div className="text-[var(--ink)]">{pending.kind === "TEMPLATE" ? `Follow-up #${pending.step}` : `Check-in #${pending.step}`}</div>
+                          <div>{formatDateTime(pending.scheduledAt)}</div>
+                        </>
+                      ) : seq.status === "PAUSED" ? (
+                        "Paused"
+                      ) : hasReplied ? (
+                        "Follow-ups stopped"
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
-      <Pagination page={page} totalCount={filteredCount} view={view} q={q} />
+      <Pager page={page} pageSize={PAGE_SIZE} total={filteredCount} href={(p) => viewHref(view, { page: String(p) })} />
     </div>
   );
 }
 
-function Th({ children }: { children?: React.ReactNode }) {
-  return <th className="px-4 py-3 font-medium text-xs uppercase tracking-wide">{children}</th>;
-}
-
-function StatCard({
-  label,
-  value,
-  href,
-  tone = "default",
-}: {
-  label: string;
-  value: number;
-  href?: string;
-  tone?: "default" | "accent";
-}) {
-  const inner = (
-    <div className="card p-4 h-full" style={tone === "accent" ? { borderColor: "var(--brand-teal)" } : undefined}>
-      <div
-        className="text-[26px] font-semibold tracking-tight leading-none"
-        style={{ color: tone === "accent" ? "var(--brand-teal-dark)" : "var(--ink)" }}
-      >
-        {value}
-      </div>
-      <div className="text-xs text-[var(--muted)] mt-1.5">{label}</div>
-    </div>
-  );
-  return href ? (
-    <Link href={href} className="block hover:opacity-80 transition-opacity">
-      {inner}
-    </Link>
-  ) : (
-    inner
-  );
-}
-
-function Pagination({ page, totalCount, view, q }: { page: number; totalCount: number; view: InfluencerView; q?: string }) {
-  if (totalCount <= PAGE_SIZE) return null;
-  const start = (page - 1) * PAGE_SIZE + 1;
-  const end = Math.min(page * PAGE_SIZE, totalCount);
-  const href = (p: number) =>
-    `/influencers?${new URLSearchParams({ ...(view !== "all" ? { view } : {}), ...(q ? { q } : {}), page: String(p) }).toString()}`;
-  return (
-    <div className="flex items-center justify-between gap-3 flex-wrap text-sm">
-      <span className="text-[var(--muted)]">
-        {start}–{end} of {totalCount}
-      </span>
-      <div className="flex gap-2">
-        <Link
-          href={href(page - 1)}
-          aria-disabled={page <= 1}
-          className={`btn-secondary px-3 py-1.5 text-xs ${page <= 1 ? "pointer-events-none opacity-40" : ""}`}
-        >
-          ← Newer
-        </Link>
-        <Link
-          href={href(page + 1)}
-          aria-disabled={end >= totalCount}
-          className={`btn-secondary px-3 py-1.5 text-xs ${end >= totalCount ? "pointer-events-none opacity-40" : ""}`}
-        >
-          Older →
-        </Link>
-      </div>
-    </div>
-  );
-}

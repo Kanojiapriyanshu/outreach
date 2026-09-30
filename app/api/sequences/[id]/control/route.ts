@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { advanceState, type SequenceState } from "@/lib/stateMachine";
-import { processScheduledAction, computeNextScheduledAt, MANUAL_OR_TERMINAL_STAGES } from "@/lib/scheduler";
+import { processScheduledAction, computeNextScheduledAt, stageAfterSilence } from "@/lib/scheduler";
 
 type ControlAction = "PAUSE" | "RESUME" | "STOP" | "SKIP" | "SEND_NOW";
 
@@ -63,9 +63,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           data: {
             status: next.status,
             currentStep: next.currentStep,
-            ...(next.status === "COMPLETED" && !MANUAL_OR_TERMINAL_STAGES.includes(sequence.stage)
-              ? { stage: "NOT_INTERESTED" as const }
-              : {}),
+            ...(next.status === "COMPLETED" && stageAfterSilence(sequence) ? { stage: "NOT_INTERESTED" as const } : {}),
           },
         }),
         prisma.activityLog.create({

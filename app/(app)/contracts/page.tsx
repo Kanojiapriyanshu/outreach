@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { formatMoney } from "@/lib/creatorReplyAnalysis";
 import { buildContract, normalizeContract } from "@/lib/contracts/template";
 import { analyzeContract } from "@/lib/contracts/analyze";
+import { PageHeader } from "@/app/components/ui";
+import BrandTabs from "../brands/BrandTabs";
 import NewContractButton from "./NewContractButton";
 
 export const dynamic = "force-dynamic";
@@ -41,15 +43,15 @@ export default async function ContractsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Contracts</h1>
-          <p className="text-sm text-[var(--muted)] mt-0.5">
-            Client services agreements built from your standard terms — edit, check the deal, and export the PDF for the brand.
-          </p>
-        </div>
-        <NewContractButton />
-      </div>
+      <PageHeader
+        workspace="brands"
+        section="Contracts"
+        title="Contracts"
+        description="Client services agreements built from your standard terms — edit, check the deal, and export the PDF for the brand."
+        actions={<NewContractButton />}
+      />
+
+      <BrandTabs active="contracts" />
 
       {open.length > 0 && (
         <p className="text-sm rounded-lg px-4 py-2.5" style={{ background: "var(--info-bg)", color: "var(--info-fg)" }}>

@@ -144,6 +144,9 @@ async function upsertThread(
 export async function syncInbox() {
   const accounts = await prisma.emailAccount.findMany({ where: { accessStatus: "CONNECTED" } });
   let threadsSynced = 0;
+  // Outreach sequences whose thread was among the ones just synced — the worker uses this to read a
+  // late reply on a thread the automation had already wrapped up.
+  const sequenceIds = new Set<string>();
 
   for (const account of accounts) {
     try {
@@ -237,7 +240,8 @@ export async function syncInbox() {
         );
         for (const thread of fetched) {
           if (!thread) continue;
-          await upsertThread(account.id, account.email, thread, { withBodies: false });
+          const row = await upsertThread(account.id, account.email, thread, { withBodies: false });
+          if (row?.sequenceId) sequenceIds.add(row.sequenceId);
           threadsSynced++;
         }
       }
@@ -257,7 +261,7 @@ export async function syncInbox() {
     }
   }
 
-  return { threadsSynced };
+  return { threadsSynced, sequenceIds: [...sequenceIds] };
 }
 
 /** Re-pulls one conversation from Gmail immediately — used right after sending a reply so the

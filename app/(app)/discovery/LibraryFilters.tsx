@@ -14,7 +14,7 @@ const PLATFORM_OPTIONS: { key: string; label: string }[] = [
 ];
 
 /** Search + subscriber/views/engagement-range + platform-presence filters for the Library tab —
- * same debounced-search / URL-driven pattern as Pipeline's DashboardFilters.tsx, so a filtered
+ * same debounced-search / URL-driven pattern as the outreach lists' ListSearch, so a filtered
  * Library view is shareable and survives a reload the same way. */
 export default function LibraryFilters() {
   const router = useRouter();

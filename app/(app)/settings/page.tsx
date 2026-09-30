@@ -198,7 +198,7 @@ export default function SettingsPage() {
   return (
     <div className="max-w-2xl space-y-8">
       <div>
-        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Settings</h1>
+        <h1 className="text-[24px] leading-8 font-semibold tracking-tight text-[var(--ink)]">Settings</h1>
         <p className="text-sm text-[var(--muted)] mt-0.5">Connect your inbox, set the timing, and manage who not to email.</p>
       </div>
 

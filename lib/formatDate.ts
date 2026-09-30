@@ -28,6 +28,23 @@ export function formatDateOnly(date: Date, timeZone: string = BUSINESS_TIMEZONE)
   return new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "numeric", day: "numeric" }).format(date);
 }
 
+/** "just now", "12m", "5h", "3d", "6w" — how long something has been waiting, at a glance. */
+export function formatAgo(date: Date, now: Date = new Date()): string {
+  const minutes = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 14) return `${days}d ago`;
+  return `${Math.floor(days / 7)}w ago`;
+}
+
+/** The hour of day (0-23) in the team's timezone — for "Good morning" and friends. */
+export function businessHour(date: Date = new Date(), timeZone: string = BUSINESS_TIMEZONE): number {
+  return Number(new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", hour12: false }).format(date)) % 24;
+}
+
 // Same fixed +5:30 offset trick as lib/businessDays.ts — IST has no DST, so this is exact.
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 

@@ -32,6 +32,23 @@ export const FINAL_STATUSES: SequenceStatus[] = [
 
 export const MAX_FOLLOW_UPS = 3;
 
+// Manual stage overrides the team sets themselves on the dashboard — a message arriving in the
+// thread should never bump the sequence backwards out of one of these into CREATOR_LIST_SENT.
+export const MANUAL_OR_TERMINAL_STAGES = ["NEGOTIATION", "CREATOR_SELECTED", "DEAL", "NOT_INTERESTED"];
+
+/**
+ * Where a sequence's pipeline stage lands when every follow-up went out with no answer. Silence
+ * reads as Not Interested — except where the team already made a call on it, or an influencer had
+ * already written back (quoted a rate, or said they're interested). Their last answer is still the
+ * true state; burying it under Not Interested is how creators who had replied went missing from
+ * the Interested and Rate Received lists. Null = leave the stage as it is.
+ */
+export function stageAfterSilence(seq: { outreachType: string; stage: string; lastReplyAt: Date | null }): "NOT_INTERESTED" | null {
+  if (MANUAL_OR_TERMINAL_STAGES.includes(seq.stage)) return null;
+  if (seq.outreachType === "CREATOR" && (seq.stage === "RATE_RECEIVED" || seq.stage === "INTERESTED" || seq.lastReplyAt)) return null;
+  return "NOT_INTERESTED";
+}
+
 export interface SequenceState {
   status: SequenceStatus;
   currentStep: number; // 0 = only Email 1 sent, 1-3 = that follow-up has been sent
