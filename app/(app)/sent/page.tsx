@@ -51,7 +51,7 @@ export default async function SentPage({
   return (
     <div className="space-y-7">
       <div>
-        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Sent</h1>
+        <h1 className="text-[24px] leading-8 font-semibold tracking-tight text-[var(--ink)]">Sent</h1>
         <p className="text-sm text-[var(--muted)] mt-0.5">
           Every email this CRM has actually sent — Email 1s, follow-ups, and nudges — across every contact, like
           Gmail&rsquo;s own Sent folder.

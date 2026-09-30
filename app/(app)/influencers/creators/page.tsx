@@ -1,12 +1,13 @@
-import Link from "next/link";
 import { Suspense } from "react";
 import { Download } from "lucide-react";
+import { Kpi, KpiGrid, PageHeader, Pager } from "@/app/components/ui";
 import { prisma } from "@/lib/prisma";
 import { matchSnippet, parseRosterFilters, rosterOrderBy, rosterQueryString, rosterWhere, searchTerms } from "@/lib/creatorRoster";
 import { findKitTitleMatches, kitTitlesByKitId } from "@/lib/creatorSmartSearch";
 import InfluencerTabs from "../InfluencerTabs";
 import RosterFilters from "./RosterFilters";
 import CreatorsTable, { type RosterRow } from "./CreatorsTable";
+import GmailSyncButton from "./GmailSyncButton";
 
 // Emails and media kits land from the background worker at any moment — never serve a cached copy.
 export const dynamic = "force-dynamic";
@@ -117,33 +118,34 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
   });
 
   const emailPercent = total > 0 ? Math.round((withEmail / total) * 100) : 0;
-  const start = (page - 1) * PAGE_SIZE + 1;
-  const end = Math.min(page * PAGE_SIZE, filteredCount);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Influencer Outreach</h1>
-          <p className="text-sm text-[var(--muted)] mt-0.5">
-            Every creator you&apos;ve found or pitched, in one place — contact details, platforms, rates and media kits.
-          </p>
-        </div>
-        <a href={`/api/influencers/creators/export?${rosterQueryString(filters)}`} className="btn-secondary inline-flex items-center gap-1.5 px-3.5 py-2.5 text-sm">
-          <Download size={15} /> Export CSV
-        </a>
-      </div>
+      <PageHeader
+        workspace="influencers"
+        section="Creators"
+        title="Creators"
+        description="Every creator you've found or pitched, in one place — contact details, platforms, rates and media kits. Tick creators to make a pitch sheet for a brand."
+        actions={
+          <>
+            <GmailSyncButton />
+            <a href={`/api/influencers/creators/export?${rosterQueryString(filters)}`} className="btn-secondary inline-flex items-center gap-1.5 px-3.5 py-2 text-sm">
+              <Download size={15} /> Export
+            </a>
+          </>
+        }
+      />
 
       <InfluencerTabs active="creators" />
 
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-        <Stat label="Creators" value={total} />
-        <Stat label={`Have an email · ${emailPercent}%`} value={withEmail} href="/influencers/creators?email=has" />
-        <Stat label="Queued for email search" value={awaitingLookup} href="/influencers/creators?email=missing" />
-        <Stat label="Rates on file" value={withRate} href="/influencers/creators?status=rate&sort=rate" />
-        <Stat label="Media kits ready" value={withKit} />
-        <Stat label="Ready to pitch" value={readyCount} href="/influencers/creators?status=ready" />
-      </div>
+      <KpiGrid columns={6}>
+        <Kpi label="Creators" value={total} />
+        <Kpi label="Have an email" value={withEmail} hint={`${emailPercent}% of the roster`} href="/influencers/creators?email=has" />
+        <Kpi label="Queued for email search" value={awaitingLookup} href="/influencers/creators?email=missing" />
+        <Kpi label="Rates on file" value={withRate} href="/influencers/creators?status=rate&sort=rate" tone={withRate > 0 ? "success" : "default"} />
+        <Kpi label="Media kits ready" value={withKit} />
+        <Kpi label="Ready to pitch" value={readyCount} href="/influencers/creators?status=ready" tone={readyCount > 0 ? "accent" : "default"} hint="Replied or has a rate" />
+      </KpiGrid>
 
       <Suspense fallback={<div className="h-10" />}>
         <RosterFilters filters={filters} />
@@ -151,45 +153,7 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
 
       <CreatorsTable rows={rows} totalMatching={filteredCount} />
 
-      {filteredCount > PAGE_SIZE && (
-        <div className="flex items-center justify-between gap-3 flex-wrap text-sm">
-          <span className="text-[var(--muted)]">
-            {start}–{end} of {filteredCount}
-          </span>
-          <div className="flex gap-2">
-            <Link
-              href={`/influencers/creators?${rosterQueryString(filters, { page: String(page - 1) })}`}
-              aria-disabled={page <= 1}
-              className={`btn-secondary px-3 py-1.5 text-xs ${page <= 1 ? "pointer-events-none opacity-40" : ""}`}
-            >
-              ← Previous
-            </Link>
-            <Link
-              href={`/influencers/creators?${rosterQueryString(filters, { page: String(page + 1) })}`}
-              aria-disabled={end >= filteredCount}
-              className={`btn-secondary px-3 py-1.5 text-xs ${end >= filteredCount ? "pointer-events-none opacity-40" : ""}`}
-            >
-              Next →
-            </Link>
-          </div>
-        </div>
-      )}
+      <Pager page={page} pageSize={PAGE_SIZE} total={filteredCount} href={(p) => `/influencers/creators?${rosterQueryString(filters, { page: String(p) })}`} />
     </div>
-  );
-}
-
-function Stat({ label, value, href }: { label: string; value: number; href?: string }) {
-  const inner = (
-    <div className="card p-4 h-full">
-      <div className="text-[24px] font-semibold tracking-tight leading-none text-[var(--ink)]">{value}</div>
-      <div className="text-xs text-[var(--muted)] mt-1.5">{label}</div>
-    </div>
-  );
-  return href ? (
-    <Link href={href} className="block hover:opacity-80 transition-opacity">
-      {inner}
-    </Link>
-  ) : (
-    inner
   );
 }

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Check, CheckCircle2, Copy, ExternalLink, FileChartColumn, Link2, Loader2, Mail, RotateCcw, X } from "lucide-react";
 import { formatMoney } from "@/lib/creatorReplyAnalysis";
-import { EXPIRY_CHOICES, brandEmailDraft, brandRateFromQuote, gmailComposeUrl, notReadyReason } from "@/lib/pitchSheet";
+import { EXPIRY_CHOICES, LINK_CODE_LENGTH, PITCH_LINK_PREFIX, brandEmailDraft, brandRateFromQuote, gmailComposeUrl, notReadyReason, slugifyLinkName } from "@/lib/pitchSheet";
 import type { RosterRow } from "./CreatorsTable";
 
 const MARGIN_KEY = "fidem_pitch_sheet_margin";
@@ -63,6 +63,9 @@ export default function PitchSheetDialog({ rows, onClose }: { rows: RosterRow[];
 
   const [brandName, setBrandName] = useState("");
   const [brandEmail, setBrandEmail] = useState("");
+  // Follows the brand name until the team types their own (e.g. "hbada-fall-picks").
+  const [linkName, setLinkName] = useState<string | null>(null);
+  const linkSlug = slugifyLinkName(linkName ?? brandName);
   const [days, setDays] = useState<number>(30);
   const [margin, setMargin] = useState(savedMargin);
   const [drafts, setDrafts] = useState<Record<string, RowDraft>>(() =>
@@ -126,6 +129,7 @@ export default function PitchSheetDialog({ rows, onClose }: { rows: RosterRow[];
         body: JSON.stringify({
           brandName,
           brandEmail: brandEmail.trim() || undefined,
+          linkName: linkSlug || undefined,
           expiresInDays: days,
           items: ready.map((r) => {
             const d = drafts[r.id];
@@ -248,6 +252,22 @@ export default function PitchSheetDialog({ rows, onClose }: { rows: RosterRow[];
                   />
                 </Field>
               </div>
+
+              <Field label="Link name" hint="What the brand sees in the link. A short code is added so nobody can guess another brand's sheet.">
+                <div className="flex items-stretch rounded-[10px] border border-[var(--border)] bg-[var(--surface)] focus-within:border-[var(--brand-teal)] focus-within:shadow-[0_0_0_3px_var(--brand-teal-light)]">
+                  <span className="flex items-center pl-3 pr-1 text-xs text-[var(--muted-2)] font-mono whitespace-nowrap">{PITCH_LINK_PREFIX}</span>
+                  <input
+                    className="flex-1 min-w-0 bg-transparent py-2 text-sm font-mono text-[var(--ink)] outline-none"
+                    value={linkName ?? linkSlug}
+                    onChange={(e) => setLinkName(e.target.value)}
+                    onBlur={() => linkName !== null && setLinkName(slugifyLinkName(linkName))}
+                    placeholder="brand-name"
+                    maxLength={60}
+                    aria-label="Link name"
+                  />
+                  <span className="flex items-center pr-3 text-xs text-[var(--muted-2)] font-mono whitespace-nowrap">-{"x".repeat(LINK_CODE_LENGTH)}</span>
+                </div>
+              </Field>
 
               <div className="flex flex-wrap items-end gap-4">
                 <div>

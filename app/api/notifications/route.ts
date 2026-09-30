@@ -50,7 +50,11 @@ const HIGH_SIGNAL_EVENTS = ["UNSUBSCRIBE_DETECTED", "BOUNCE_DETECTED"] as const;
  */
 export async function GET(req: NextRequest) {
   try {
-    if (await claimFallbackTick()) {
+    // A local dev server shares the production database, so a fallback tick from it would send real
+    // emails with whatever code is on the developer's machine. Only production runs the backstop,
+    // unless a developer opts in with ALLOW_DEV_FALLBACK_TICK=1.
+    const fallbackAllowed = process.env.NODE_ENV === "production" || process.env.ALLOW_DEV_FALLBACK_TICK === "1";
+    if (fallbackAllowed && (await claimFallbackTick())) {
       after(async () => {
         const result = await runTickWithHeartbeat();
         if (!result.ok) console.error("[worker fallback] tick failed:", result.error);
@@ -65,7 +69,7 @@ export async function GET(req: NextRequest) {
   const sinceDate = since ? new Date(since) : null;
   const validSince = sinceDate && !isNaN(sinceDate.getTime()) ? sinceDate : null;
 
-  const [unreadThreads, unreadCount, alerts, alertCount] = await Promise.all([
+  const [unreadThreads, unreadCount, alerts, alertCount, brandsWaiting, creatorsWaiting] = await Promise.all([
     prisma.inboxThread.findMany({
       where: { isUnread: true, isArchived: false, isTrashed: false },
       orderBy: { lastMessageAt: "desc" },
@@ -104,6 +108,9 @@ export async function GET(req: NextRequest) {
           },
         })
       : Promise.resolve(0),
+    // Replies waiting on the team, per workspace — the counts beside Brands and Influencers in the nav.
+    prisma.outreachSequence.count({ where: { outreachType: "BRAND", deletedAt: null, awaitingResponseSince: { not: null } } }),
+    prisma.outreachSequence.count({ where: { outreachType: "CREATOR", deletedAt: null, awaitingResponseSince: { not: null } } }),
   ]);
 
   return NextResponse.json({
@@ -112,5 +119,6 @@ export async function GET(req: NextRequest) {
     // One number, matching what the inbox shows — unread conversations plus anything that went
     // wrong and can't be "read" away.
     unreadCount: unreadCount + alertCount,
+    waiting: { brands: brandsWaiting, influencers: creatorsWaiting },
   });
 }

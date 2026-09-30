@@ -18,7 +18,7 @@ export default async function DraftsPage() {
   return (
     <div className="space-y-7">
       <div>
-        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Drafts</h1>
+        <h1 className="text-[24px] leading-8 font-semibold tracking-tight text-[var(--ink)]">Drafts</h1>
         <p className="text-sm text-[var(--muted)] mt-0.5">
           Emails you started but haven&rsquo;t sent yet — pick one up where you left off, or delete it.
         </p>

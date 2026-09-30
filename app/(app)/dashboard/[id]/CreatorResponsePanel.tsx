@@ -6,7 +6,7 @@ import { MessageSquareReply, Pencil, Sparkles } from "lucide-react";
 import { formatRate, type QuotedRate } from "@/lib/creatorReplyAnalysis";
 import { replyIntentLabel } from "@/lib/influencerOutreach";
 import { formatDateTime } from "@/lib/formatDate";
-import MarkHandledButton from "../../influencers/MarkHandledButton";
+import MarkHandledButton from "@/app/components/MarkHandledButton";
 
 const DELIVERABLES = ["Dedicated video", "Integration", "Short-form", "Instagram", "Package"];
 const CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "INR"];

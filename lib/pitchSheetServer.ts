@@ -1,6 +1,17 @@
 import "server-only";
+import { randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
-import { brandRateLine, isReadyToPitch, linkState } from "@/lib/pitchSheet";
+import { brandRateLine, isReadyToPitch, linkState, pitchLinkToken } from "@/lib/pitchSheet";
+
+/** A fresh short token for `name` that no other sheet uses (a clash is ~1 in a billion per name). */
+export async function uniquePitchToken(name: string): Promise<string> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const token = pitchLinkToken(name, randomBytes(8));
+    const taken = await prisma.pitchSheet.findUnique({ where: { token }, select: { id: true } });
+    if (!taken) return token;
+  }
+  throw new Error("Couldn't make a unique link — try again");
+}
 
 const LIVE_REPLIED_SEQUENCE = {
   deletedAt: null,

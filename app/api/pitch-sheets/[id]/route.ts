@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { expiryFromDays } from "@/lib/pitchSheet";
+import { expiryFromDays, pitchSheetUrl, slugifyLinkName } from "@/lib/pitchSheet";
+import { appBaseUrl, uniquePitchToken } from "@/lib/pitchSheetServer";
 
 /**
- * Extend or re-open a link ({ action: "extend", days }), turn it off ({ action: "turn-off" }), or take
+ * Extend or re-open a link ({ action: "extend", days }), turn it off ({ action: "turn-off" }), take
  * one creator off the sheet ({ action: "remove-item", itemId }) — the brand's link drops them
- * straight away, since it reads the sheet live.
+ * straight away, since it reads the sheet live — or give the link a new name ({ action: "rename",
+ * linkName }), which retires the old URL.
  */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  let body: { action?: string; days?: number; itemId?: string };
+  let body: { action?: string; days?: number; itemId?: string; linkName?: string };
   try {
     body = await req.json();
   } catch {
@@ -32,6 +34,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     await prisma.pitchSheet.update({ where: { id }, data: { updatedAt: new Date() } });
   } else if (body.action === "turn-off") {
     await prisma.pitchSheet.update({ where: { id }, data: { revokedAt: new Date() } });
+  } else if (body.action === "rename") {
+    const name = typeof body.linkName === "string" ? body.linkName : "";
+    if (!slugifyLinkName(name)) return NextResponse.json({ error: "Use at least one letter or number in the link name" }, { status: 400 });
+    const updated = await prisma.pitchSheet.update({ where: { id }, data: { token: await uniquePitchToken(name) } });
+    return NextResponse.json({ ok: true, url: pitchSheetUrl(appBaseUrl(req.nextUrl.origin), updated.token) });
   } else {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   }

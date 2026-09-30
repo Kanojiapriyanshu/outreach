@@ -17,7 +17,7 @@ export default async function ActivityPage() {
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">History</h1>
+        <h1 className="text-[24px] leading-8 font-semibold tracking-tight text-[var(--ink)]">History</h1>
         <p className="text-sm text-[var(--muted)] mt-0.5">Everything the system has done, most recent first.</p>
       </div>
       <div className="card divide-y divide-[var(--border)]">

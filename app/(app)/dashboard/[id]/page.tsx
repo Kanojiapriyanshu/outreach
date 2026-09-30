@@ -1,8 +1,12 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ChevronLeft, ExternalLink, MessageSquareReply } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { companyOrCreatorName } from "@/lib/display";
-import { formatDateTime } from "@/lib/formatDate";
+import { budgetLabel, companyOrCreatorName, gmailThreadLink, influencerRangeLabel } from "@/lib/display";
+import { formatAgo, formatDateTime } from "@/lib/formatDate";
+import { brandReplyLabel } from "@/lib/brandOutreach";
 import Badge, { StageBadge } from "@/app/components/Badge";
+import MarkHandledButton from "@/app/components/MarkHandledButton";
 import SequenceControls from "./SequenceControls";
 import StageControl from "./StageControl";
 import UpcomingFollowUpPreview from "./UpcomingFollowUpPreview";
@@ -26,6 +30,11 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
       scheduledActions: { orderBy: { step: "asc" } },
       messages: { orderBy: { sentAt: "asc" } },
       activityLogs: { orderBy: { timestamp: "asc" } },
+      // A brand reply recorded before reply text was stored still shows — read from the inbox mirror.
+      inboxThreads: {
+        take: 1,
+        select: { messages: { where: { direction: "IN" }, orderBy: { sentAt: "desc" }, take: 1, select: { snippet: true, bodyText: true } } },
+      },
     },
   });
 
@@ -53,24 +62,71 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
     ...sequence.activityLogs.map((a) => ({ time: a.timestamp, label: a.description })),
   ].sort((a, b) => a.time.getTime() - b.time.getTime());
 
+  const brand = sequence.contact.brand;
+  const creator = sequence.contact.creator;
+  const accent = isCreator ? "var(--influencers-accent)" : "var(--brands-accent)";
+  const accentLight = isCreator ? "var(--influencers-accent-light)" : "var(--brands-accent-light)";
+  const mirroredReply = sequence.inboxThreads[0]?.messages[0];
+  const brandReplyText = sequence.lastReplyText ?? mirroredReply?.bodyText?.trim() ?? mirroredReply?.snippet ?? null;
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)] break-words">
-            {companyOrCreatorName(sequence.contact)}
-          </h1>
-          <p className="text-sm text-[var(--muted)] mt-0.5 break-words">
-            {sequence.contact.name} · {sequence.contact.email} · {sequence.outreachType === "BRAND" ? "Brand" : "Creator"}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap shrink-0">
-          <StageBadge stage={sequence.stage} />
-          <Badge status={sequence.status} />
+      <div>
+        <Link
+          href={isCreator ? "/influencers" : "/brands"}
+          className="inline-flex items-center gap-1 text-xs font-medium mb-3 rounded-md px-1.5 py-0.5"
+          style={{ color: accent, background: accentLight }}
+        >
+          <ChevronLeft size={13} /> {isCreator ? "Influencer outreach" : "Brand outreach"}
+        </Link>
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-[24px] leading-8 font-semibold tracking-tight text-[var(--ink)] break-words">
+              {companyOrCreatorName(sequence.contact) === "—" ? sequence.contact.name : companyOrCreatorName(sequence.contact)}
+            </h1>
+            <p className="text-sm text-[var(--muted)] mt-1 break-words">
+              {sequence.contact.name} · {sequence.contact.email}
+              {!isCreator && brand?.isAgency ? " · Agency" : ""}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap shrink-0">
+            <StageBadge stage={sequence.stage} />
+            <Badge status={sequence.status} />
+            <a href={gmailThreadLink(sequence.threadId)} target="_blank" rel="noopener noreferrer" className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs">
+              Open in Gmail <ExternalLink size={12} />
+            </a>
+          </div>
         </div>
       </div>
 
       {sequence.deletedAt && <TrashBanner sequenceId={sequence.id} deletedAt={sequence.deletedAt.toISOString()} />}
+
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
+      <div className="space-y-5 min-w-0">
+      {!isCreator && sequence.lastReplyAt && (
+        <div
+          className="card p-5"
+          style={sequence.awaitingResponseSince ? { borderColor: "var(--brands-accent)", boxShadow: "0 0 0 1px var(--brands-accent-light)" } : undefined}
+        >
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="font-semibold text-sm text-[var(--ink)] flex items-center gap-2">
+                <MessageSquareReply size={15} style={{ color: "var(--brands-accent)" }} /> Their latest reply
+              </h2>
+              <p className="text-xs text-[var(--muted)] mt-1">
+                {brandReplyLabel(sequence.replyIntent)} · {formatDateTime(sequence.lastReplyAt)} ({formatAgo(sequence.lastReplyAt)})
+                {sequence.repliedAfterStep !== null && ` · first replied after ${sequence.repliedAfterStep === 0 ? "Email 1" : `follow-up ${sequence.repliedAfterStep}`}`}
+              </p>
+            </div>
+            {sequence.awaitingResponseSince && <MarkHandledButton sequenceId={sequence.id} compact />}
+          </div>
+          {brandReplyText && (
+            <blockquote className="mt-3 text-sm text-[var(--ink)] whitespace-pre-wrap break-words rounded-lg px-4 py-3 max-h-64 overflow-y-auto" style={{ background: "var(--surface-2)", borderLeft: "3px solid var(--brands-accent)" }}>
+              {brandReplyText}
+            </blockquote>
+          )}
+        </div>
+      )}
 
       {isCreator && (
         <CreatorResponsePanel
@@ -152,24 +208,12 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
       )}
 
       <div className="card p-5">
-        <h2 className="font-semibold text-sm mb-4 text-[var(--ink)]">Timeline</h2>
-        <ol className="space-y-3.5">
-          {timeline.map((event, i) => (
-            <li key={i} className="text-sm border-l-2 border-[var(--border)] pl-3.5">
-              <div className="text-[var(--muted-2)] text-xs">{formatDateTime(event.time)}</div>
-              <div className="text-[var(--ink)] mt-0.5">{event.label}</div>
-            </li>
-          ))}
-        </ol>
-      </div>
-
-      <div className="card p-5">
-        <h2 className="font-semibold text-sm mb-4 text-[var(--ink)]">Messages</h2>
+        <h2 className="font-semibold text-sm mb-4 text-[var(--ink)]">Emails sent</h2>
         <div className="space-y-4">
           {sequence.messages.map((m) => (
             <div key={m.id} className="border border-[var(--border)] rounded-xl p-4">
               <div className="flex justify-between text-xs text-[var(--muted-2)] mb-1.5">
-                <span>{m.direction === "OUT" ? "Sent" : "Received"}</span>
+                <span>{m.direction === "OUT" ? (m.source === "MANUAL" ? "You wrote in Gmail" : "Sent by the system") : "Received"}</span>
                 <span>{formatDateTime(m.sentAt)}</span>
               </div>
               <div className="font-medium text-sm mb-1.5 text-[var(--ink)]">{m.subject}</div>
@@ -178,6 +222,68 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
           ))}
         </div>
       </div>
+      </div>
+
+      <aside className="space-y-5">
+        <div className="card p-5">
+          <h2 className="font-semibold text-sm mb-3 text-[var(--ink)]">Details</h2>
+          <dl className="space-y-2.5 text-sm">
+            <Detail label="Workspace">
+              <span className="badge" style={{ background: accentLight, color: accent }}>
+                {isCreator ? "Influencer" : brand?.isAgency ? "Brand · via agency" : "Brand"}
+              </span>
+            </Detail>
+            <Detail label="Contact">{sequence.contact.name}</Detail>
+            <Detail label="Email">
+              <span className="break-all">{sequence.contact.email}</span>
+            </Detail>
+            {!isCreator && brand?.category && <Detail label="Sells">{brand.category}</Detail>}
+            {!isCreator && <Detail label="Budget">{budgetLabel(brand?.budgetRangeText ?? null, brand?.budgetType ?? "UNKNOWN")}</Detail>}
+            {!isCreator && <Detail label="Channel size">{influencerRangeLabel(brand?.influencerRangeMin ?? null, brand?.influencerRangeMax ?? null)}</Detail>}
+            {!isCreator && brand?.website && (
+              <Detail label="Website">
+                <a href={brand.website.startsWith("http") ? brand.website : `https://${brand.website}`} target="_blank" rel="noopener noreferrer" className="hover:underline break-all" style={{ color: "var(--brand-teal-dark)" }}>
+                  {brand.website.replace(/^https?:\/\//, "")}
+                </a>
+              </Detail>
+            )}
+            {isCreator && creator?.channelUrl && (
+              <Detail label="Channel">
+                <a href={creator.channelUrl} target="_blank" rel="noopener noreferrer" className="hover:underline inline-flex items-center gap-1" style={{ color: "var(--brand-teal-dark)" }}>
+                  {creator.channelName ?? creator.name} <ExternalLink size={11} />
+                </a>
+              </Detail>
+            )}
+            {isCreator && creator?.subscriberCount != null && <Detail label="Subscribers">{creator.subscriberCount.toLocaleString("en-US")}</Detail>}
+            <Detail label="Sent from">
+              <span className="break-all">{sequence.emailAccount.email}</span>
+            </Detail>
+            <Detail label="Started">{formatDateTime(sequence.createdAt)}</Detail>
+          </dl>
+        </div>
+
+        <div className="card p-5">
+          <h2 className="font-semibold text-sm mb-4 text-[var(--ink)]">Timeline</h2>
+          <ol className="space-y-3.5 max-h-[560px] overflow-y-auto scroll-slim pr-1">
+            {[...timeline].reverse().map((event, i) => (
+              <li key={i} className="text-sm border-l-2 border-[var(--border)] pl-3.5">
+                <div className="text-[var(--muted-2)] text-xs">{formatDateTime(event.time)}</div>
+                <div className="text-[var(--ink)] mt-0.5">{event.label}</div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </aside>
+      </div>
+    </div>
+  );
+}
+
+function Detail({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[96px_1fr] gap-2">
+      <dt className="text-[var(--muted-2)] text-xs pt-0.5">{label}</dt>
+      <dd className="text-[var(--ink)] min-w-0">{children}</dd>
     </div>
   );
 }

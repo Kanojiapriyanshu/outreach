@@ -440,6 +440,12 @@ model Creator {
   quotedRateDeliverable String?
   quotedRateAt          DateTime?
 
+  /**
+   * Kept off the public creator roster (/roster) even though they qualify for it (interested or
+   * rate received). Set by hand from the Public roster tab.
+   */
+  rosterHidden Boolean @default(false)
+
   contacts        Contact[]
   pitchSheetItems PitchSheetItem[]
 

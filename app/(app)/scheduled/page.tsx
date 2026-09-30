@@ -82,7 +82,7 @@ export default async function ScheduledPage() {
   return (
     <div className="space-y-7">
       <div>
-        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)]">Scheduled Emails</h1>
+        <h1 className="text-[24px] leading-8 font-semibold tracking-tight text-[var(--ink)]">Scheduled Emails</h1>
         <p className="text-sm text-[var(--muted)] mt-0.5">
           Every first email you&rsquo;ve told the CRM to send later, in one place — like Gmail&rsquo;s own Scheduled
           folder. Reschedule or cancel anything that hasn&rsquo;t gone out yet; a cancelled one can still be

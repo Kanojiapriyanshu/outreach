@@ -109,15 +109,27 @@ export async function analyzeCreatorReply(text: string, options: { sentBodies?: 
     });
 
     let intent = ai.intent;
+    let finalRates = rates;
     // The model called it a rate but nothing it reported survived verification — keep the
     // creator highlighted as interested rather than recording a price nobody wrote.
     if (intent === "RATE_SHARED" && rates.length === 0 && !ai.rateCardShared) intent = "INTERESTED";
+    // A creator who names their price is answering, even when the reply also says "not at that
+    // budget" or "not right now" — that's a counter, not a no. The rules already rank a concrete
+    // price above everything else; the model is held to the same rule, because marking a creator
+    // who quoted a rate as Not Interested is the mistake that loses them.
+    if (intent !== "RATE_SHARED" && intent !== "OPT_OUT" && intent !== "AUTO_REPLY") {
+      if (rates.length > 0) intent = "RATE_SHARED";
+      else if (intent === "UNINTERESTED" && rules.intent === "RATE_SHARED" && rules.rates.some((r) => r.currency !== null)) {
+        intent = "RATE_SHARED";
+        finalRates = rules.rates;
+      }
+    }
 
     return {
       intent,
-      rates: intent === "RATE_SHARED" ? rates : [],
+      rates: intent === "RATE_SHARED" ? finalRates : [],
       rateNote:
-        intent === "RATE_SHARED" && rates.length === 0
+        intent === "RATE_SHARED" && finalRates.length === 0
           ? "Rate card or media kit shared — open the email to see their pricing."
           : null,
       summary: ai.summary.trim().slice(0, 240) || null,

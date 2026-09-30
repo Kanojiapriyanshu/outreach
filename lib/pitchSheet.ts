@@ -11,6 +11,43 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type LinkState = "live" | "expired" | "turned-off";
 
+/** Brand links live at /p/<name>-<code>: short enough to read out or paste into a WhatsApp message. */
+export const PITCH_LINK_PREFIX = "/p/";
+export const MAX_LINK_NAME = 40;
+export const LINK_CODE_LENGTH = 6;
+// Lowercase with the look-alikes (0/o, 1/l/i) left out, so a code copied from a screenshot or read
+// over a call comes out right.
+const LINK_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+
+/** "Glössier & Co. — Q4" → "glossier-and-co-q4". Empty when nothing usable is left. */
+export function slugifyLinkName(text: string): string {
+  return text
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, MAX_LINK_NAME)
+    .replace(/-+$/, "");
+}
+
+/**
+ * The link's token: the readable name the team chose plus a short random code. The code is what
+ * keeps a brand from guessing another brand's sheet (and its rates) by typing a competitor's name —
+ * the name alone would be the only thing standing between them.
+ */
+export function pitchLinkToken(name: string, randomBytes: Uint8Array): string {
+  const slug = slugifyLinkName(name) || "shortlist";
+  let code = "";
+  for (let i = 0; i < LINK_CODE_LENGTH; i++) code += LINK_CODE_ALPHABET[randomBytes[i % randomBytes.length] % LINK_CODE_ALPHABET.length];
+  return `${slug}-${code}`;
+}
+
+export function pitchSheetUrl(base: string, token: string): string {
+  return `${base}${PITCH_LINK_PREFIX}${token}`;
+}
+
 /** What decides whether a creator may go on a brand's sheet. */
 export interface PitchEligibilityInput {
   replied: boolean;

@@ -8,8 +8,12 @@ import {
   gmailComposeUrl,
   isReadyToPitch,
   linkState,
+  pitchLinkToken,
+  pitchSheetUrl,
+  slugifyLinkName,
 } from "../pitchSheet";
 import { matchSnippet, rosterWhere, searchTerms } from "../creatorRoster";
+import { looksLikeCreatorPitch } from "../creatorPitchRule";
 
 const NOW = new Date("2026-09-24T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -40,6 +44,27 @@ describe("link expiry", () => {
   it("counts whole days left", () => {
     expect(daysLeft(new Date(NOW.getTime() + 29.5 * DAY), NOW)).toBe(30);
     expect(daysLeft(null, NOW)).toBeNull();
+  });
+});
+
+describe("short brand links", () => {
+  it("turns a brand or campaign name into a clean link name", () => {
+    expect(slugifyLinkName("ChitaLiving")).toBe("chitaliving");
+    expect(slugifyLinkName("Glössier & Co. — Q4 Picks!")).toBe("glossier-and-co-q4-picks");
+    expect(slugifyLinkName("  ***  ")).toBe("");
+    expect(slugifyLinkName("a".repeat(80))).toHaveLength(40);
+  });
+
+  it("adds a short unguessable code without look-alike characters", () => {
+    const token = pitchLinkToken("Hbada Fall", new Uint8Array([0, 1, 2, 3, 4, 250]));
+    expect(token).toMatch(/^hbada-fall-[a-z2-9]{6}$/);
+    const code = token.slice("hbada-fall-".length);
+    expect(code).not.toMatch(/[01ilo]/);
+    expect(pitchLinkToken("", new Uint8Array(6))).toMatch(/^shortlist-[a-z2-9]{6}$/);
+  });
+
+  it("builds the short URL", () => {
+    expect(pitchSheetUrl("https://app.fidemgrowth.com", "hbada-k7m2qx")).toBe("https://app.fidemgrowth.com/p/hbada-k7m2qx");
   });
 });
 
@@ -109,5 +134,14 @@ describe("smart search", () => {
     expect(hit?.label).toBe("In their reply");
     expect(hit?.snippet).toContain("smart lock review");
     expect(matchSnippet([{ label: "x", text: "nothing here" }], ["smart"])).toBeNull();
+  });
+});
+
+describe("Gmail creator-pitch rule", () => {
+  it("tells Fidem's creator pitches from its brand pitches by the opening", () => {
+    expect(looksLikeCreatorPitch("Fidem Growth × Cozy K — Paid Home/Lifestyle Collab", "Hello Kennedy, This is Yash from Fidem Growth — we work with US-based creators on paid brand collaborations. I've been following your content")).toBe(true);
+    expect(looksLikeCreatorPitch("Paid Brand Opportunity: HBADA", "Hello Adam, We have an exciting collaboration opportunity for you with Hbada. We have your proposed rate of $800 USD")).toBe(true);
+    expect(looksLikeCreatorPitch("HUANUO × Fidem Growth — Turning Your US Growth Into a Creator-Led Profit Engine", "Hello Ginman, The chair feels built for exactly the kind of content that converts on YouTube right now. We work with pre-vetted creators")).toBe(false);
+    expect(looksLikeCreatorPitch("Linkols × Fidem Growth — Campaign", "Hello Kaye, I saw you're leading the Twotrees campaign on the agency side, so I figured it made more sense to reach out agency-to-agency")).toBe(false);
   });
 });

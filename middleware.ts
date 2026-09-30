@@ -19,8 +19,12 @@ const PUBLIC_PATHS = [
   "/api/media-kit/public",
   "/media-kit/shared",
   // Pitch sheets sent to brands — same reasoning; expiry and turn-off are checked in the route.
+  // "/p" is the short form of the same link.
   "/api/pitch-sheets/public",
   "/pitch-sheet",
+  "/p",
+  // The public creator roster shared with every brand — no rates, no contact details.
+  "/roster",
 ];
 
 export async function middleware(req: NextRequest) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { advanceState, isActiveForSending, FINAL_STATUSES, MAX_FOLLOW_UPS, type SequenceState } from "../stateMachine";
+import { advanceState, isActiveForSending, stageAfterSilence, FINAL_STATUSES, MAX_FOLLOW_UPS, type SequenceState } from "../stateMachine";
 
 describe("advanceState", () => {
   it("moves WAITING_FOR_REPLY -> FOLLOW_UP_1_SENT on NO_REPLY_ADVANCE", () => {
@@ -62,6 +62,29 @@ describe("advanceState", () => {
     state = advanceState(state, "NO_REPLY_ADVANCE", 4);
     expect(state.status).toBe("COMPLETED");
     expect(state.currentStep).toBe(4);
+  });
+});
+
+describe("stageAfterSilence", () => {
+  const replied = new Date("2026-09-20T10:00:00Z");
+
+  it("marks a brand or creator who never answered as Not Interested", () => {
+    expect(stageAfterSilence({ outreachType: "BRAND", stage: "FIRST_EMAIL_SENT", lastReplyAt: null })).toBe("NOT_INTERESTED");
+    expect(stageAfterSilence({ outreachType: "BRAND", stage: "CREATOR_LIST_SENT", lastReplyAt: replied })).toBe("NOT_INTERESTED");
+    expect(stageAfterSilence({ outreachType: "CREATOR", stage: "FIRST_EMAIL_SENT", lastReplyAt: null })).toBe("NOT_INTERESTED");
+  });
+
+  it("never buries an influencer who already replied under Not Interested", () => {
+    expect(stageAfterSilence({ outreachType: "CREATOR", stage: "RATE_RECEIVED", lastReplyAt: replied })).toBeNull();
+    expect(stageAfterSilence({ outreachType: "CREATOR", stage: "INTERESTED", lastReplyAt: replied })).toBeNull();
+    // Replied with a question, the team answered by hand, then the check-ins went unanswered.
+    expect(stageAfterSilence({ outreachType: "CREATOR", stage: "FIRST_EMAIL_SENT", lastReplyAt: replied })).toBeNull();
+  });
+
+  it("leaves a stage the team set by hand alone", () => {
+    for (const stage of ["NEGOTIATION", "CREATOR_SELECTED", "DEAL", "NOT_INTERESTED"]) {
+      expect(stageAfterSilence({ outreachType: "BRAND", stage, lastReplyAt: null })).toBeNull();
+    }
   });
 });
 

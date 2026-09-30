@@ -8,6 +8,7 @@ import SearchTab from "./SearchTab";
 import CampaignTab from "./CampaignTab";
 import LibraryFilters from "./LibraryFilters";
 import CreatorCard, { type CreatorCardData } from "./CreatorCard";
+import { PageHeader, WorkspaceTabs } from "@/app/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -33,41 +34,30 @@ export default async function DiscoveryPage({ searchParams }: { searchParams: Pr
   const unitsUsedToday = await getUnitsUsedToday();
 
   return (
-    <div className="space-y-7">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)] flex items-center gap-2">
-            <Compass size={22} /> Creator Discovery
-          </h1>
-          <p className="text-sm text-[var(--muted)] mt-0.5">
-            Campaign Match reads each creator&apos;s actual upload history to qualify them for a brief; Quick Search
-            finds channels by keyword. Business email and social links are pulled from every channel automatically.
-          </p>
-        </div>
-        <div className="text-xs text-[var(--muted-2)] whitespace-nowrap">{unitsUsedToday.toLocaleString()} API units used today</div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        workspace="influencers"
+        section="Discovery"
+        title="Creator discovery"
+        description="Campaign Match reads each creator's actual upload history to qualify them for a brief; Quick Search finds channels by keyword. Business email and social links are pulled from every channel automatically."
+        actions={
+          <span className="inline-flex items-center gap-1.5 text-xs text-[var(--muted-2)] whitespace-nowrap">
+            <Compass size={13} /> {unitsUsedToday.toLocaleString()} YouTube API units used today
+          </span>
+        }
+      />
 
-      <div className="flex gap-1">
-        <TabLink tab="campaign" active={tab === "campaign"} label="Campaign Match" />
-        <TabLink tab="search" active={tab === "search"} label="Quick Search" />
-        <TabLink tab="library" active={tab === "library"} label="Library" />
-      </div>
+      <WorkspaceTabs
+        active={tab}
+        tabs={[
+          { key: "campaign", href: "/discovery?tab=campaign", label: "Campaign Match" },
+          { key: "search", href: "/discovery?tab=search", label: "Quick Search" },
+          { key: "library", href: "/discovery?tab=library", label: "Library" },
+        ]}
+      />
 
       {tab === "campaign" ? <CampaignTab /> : tab === "search" ? <SearchTab /> : <LibraryTab params={params} />}
     </div>
-  );
-}
-
-function TabLink({ tab, active, label }: { tab: Tab; active: boolean; label: string }) {
-  return (
-    <Link
-      href={`/discovery?tab=${tab}`}
-      className={`px-4 py-2 text-sm font-medium rounded-full transition-colors ${
-        active ? "bg-[var(--ink)] text-[var(--ink-inverse)]" : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]"
-      }`}
-    >
-      {label}
-    </Link>
   );
 }
 

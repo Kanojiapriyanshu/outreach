@@ -1,5 +1,23 @@
 import { describe, it, expect } from "vitest";
-import { formatDateTime, formatDateOnly, istDayStart, istDayEnd, BUSINESS_TIMEZONE } from "../formatDate";
+import { formatDateTime, formatDateOnly, formatAgo, businessHour, istDayStart, istDayEnd, BUSINESS_TIMEZONE } from "../formatDate";
+
+describe("formatAgo", () => {
+  const now = new Date("2026-09-30T12:00:00Z");
+  it("says how long ago, in the largest sensible unit", () => {
+    expect(formatAgo(new Date("2026-09-30T11:59:40Z"), now)).toBe("just now");
+    expect(formatAgo(new Date("2026-09-30T11:48:00Z"), now)).toBe("12m ago");
+    expect(formatAgo(new Date("2026-09-30T07:00:00Z"), now)).toBe("5h ago");
+    expect(formatAgo(new Date("2026-09-27T12:00:00Z"), now)).toBe("3d ago");
+    expect(formatAgo(new Date("2026-08-19T12:00:00Z"), now)).toBe("6w ago");
+  });
+});
+
+describe("businessHour", () => {
+  it("reads the hour in IST", () => {
+    expect(businessHour(new Date("2026-09-30T04:30:00Z"))).toBe(10);
+    expect(businessHour(new Date("2026-09-30T18:30:00Z"))).toBe(0);
+  });
+});
 
 describe("formatDateTime", () => {
   it("renders a UTC instant as the correct wall-clock time in the business timezone (IST, UTC+5:30)", () => {

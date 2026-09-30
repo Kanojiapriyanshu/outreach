@@ -19,9 +19,10 @@ import {
 } from "@/lib/creatorReplyAnalysis";
 import { requestCreatorMediaKit, syncCreatorRateFromSequence } from "@/lib/creatorProfileSync";
 import { emailAddressOf, ownSenderMatcher } from "@/lib/senderIdentity";
+import { isTrackingNotification } from "@/lib/trackingSenders";
 import type { gmail_v1 } from "googleapis";
 import { renderTemplate } from "@/lib/templates";
-import { advanceState, MAX_FOLLOW_UPS, type SequenceState } from "@/lib/stateMachine";
+import { advanceState, MAX_FOLLOW_UPS, MANUAL_OR_TERMINAL_STAGES, stageAfterSilence, type SequenceState } from "@/lib/stateMachine";
 import { addBusinessDays, addCalendarDays, clampToSendingWindow, pickRandomSendTime, sendingWindowFor } from "@/lib/businessDays";
 import { isUnderDailyLimit } from "@/lib/quota";
 import { classifyReply } from "@/lib/replyClassifier";
@@ -29,7 +30,7 @@ import { renderNudge, maxStepsForNudge, type NudgeKind } from "@/lib/genericNudg
 import { processScheduledInitialEmail } from "@/lib/trackSequence";
 import { syncInbox } from "@/lib/inboxSync";
 import { formatDateTime } from "@/lib/formatDate";
-import type { AutomationSettings, SequenceStatus as PrismaSequenceStatus, PipelineStage } from "@/app/generated/prisma/client";
+import type { AutomationSettings, SequenceStatus as PrismaSequenceStatus, PipelineStage, Prisma } from "@/app/generated/prisma/client";
 
 // Sequences in these statuses/stages are done for good — nothing left to watch for. Everything
 // else (including REPLIED — a brand asking for the creator list, say) keeps being watched, since
@@ -38,9 +39,25 @@ import type { AutomationSettings, SequenceStatus as PrismaSequenceStatus, Pipeli
 const DEAD_STATUSES: PrismaSequenceStatus[] = ["BOUNCED", "UNSUBSCRIBED", "STOPPED", "COMPLETED", "PAUSED"];
 const DEAD_STAGES: PipelineStage[] = ["DEAL", "NOT_INTERESTED"];
 
-// Manual stage overrides the team sets themselves on the dashboard — a message arriving in the
-// thread should never bump the sequence backwards out of one of these into CREATOR_LIST_SENT.
-export const MANUAL_OR_TERMINAL_STAGES = ["NEGOTIATION", "CREATOR_SELECTED", "DEAL", "NOT_INTERESTED"];
+export { MANUAL_OR_TERMINAL_STAGES, stageAfterSilence };
+
+/**
+ * Threads the automation wrapped up because nobody answered the follow-ups. The regular reply
+ * check stops watching them, but people answer late — a creator quoting a rate days after the last
+ * follow-up is common — and a reply nobody reads leaves them showing as Not Interested. So they're
+ * still read: in a slow background sweep (runDormantReplyCheck), and straight away whenever the
+ * inbox sync sees their thread change. A thread the team closed as Not Interested by hand, or
+ * marked as a Deal, is left alone.
+ */
+export const DORMANT_WHERE: Prisma.OutreachSequenceWhereInput = {
+  deletedAt: null,
+  status: "COMPLETED",
+  stage: { not: "DEAL" },
+  OR: [
+    { stage: { not: "NOT_INTERESTED" } },
+    { activityLogs: { none: { eventType: "STAGE_CHANGED", description: { startsWith: "Stage set to Not Interested" } } } },
+  ],
+};
 // Once the pipeline has moved past this point, a reply is being read in the context of "the list
 // has already been sent" (CREATOR_CHOSEN) rather than "are they interested enough to want it"
 // (WANTS_CREATOR_LIST).
@@ -213,10 +230,16 @@ async function handleManualOutboundMessage(
 // Influencer stages only ever move forward on their own: a "sounds good" after a quoted rate must
 // not knock the creator back from Rate Received to Interested.
 const CREATOR_STAGE_ORDER: string[] = ["FIRST_EMAIL_SENT", "INTERESTED", "RATE_RECEIVED", "NEGOTIATION", "CREATOR_SELECTED", "DEAL"];
-const CREATOR_STAGE_NAME: Partial<Record<PipelineStage, string>> = {
+const CREATOR_STAGE_NAME: Record<PipelineStage, string> = {
+  FIRST_EMAIL_SENT: "First Email Sent",
+  CREATOR_LIST_REQUESTED: "Creator List Requested",
+  CREATOR_LIST_SENT: "Creator List Sent",
+  NEGOTIATION: "Negotiation",
+  CREATOR_SELECTED: "Creator Selected",
+  NOT_INTERESTED: "Not Interested",
+  DEAL: "Deal",
   INTERESTED: "Interested",
   RATE_RECEIVED: "Rate Received",
-  NOT_INTERESTED: "Not Interested",
 };
 
 function creatorStageAfter(current: string, reached: PipelineStage): PipelineStage {
@@ -232,6 +255,29 @@ function replyDate(raw: string): Date {
 }
 
 /**
+ * Set while reading a thread the automation had already wrapped up (see DORMANT_WHERE): when the
+ * team last touched it by hand, so a reply they've already acted on isn't flagged again.
+ */
+type LateReplyContext = { teamActedAt: Date | null };
+
+function handledAfter(late: LateReplyContext | null, rawReplyDate: string): boolean {
+  return !!late?.teamActedAt && late.teamActedAt.getTime() > replyDate(rawReplyDate).getTime();
+}
+
+/**
+ * The stage a wrapped-up thread goes back to when the other side writes again — what it was before
+ * running out of follow-ups turned it into Not Interested.
+ */
+async function stageBeforeSilence(seq: SequenceWithContact): Promise<PipelineStage> {
+  if (seq.outreachType === "CREATOR") {
+    if (seq.quotedRateAt) return "RATE_RECEIVED";
+    return seq.lastReplyAt ? "INTERESTED" : "FIRST_EMAIL_SENT";
+  }
+  const wroteByHand = await prisma.emailMessage.count({ where: { sequenceId: seq.id, direction: "OUT", source: "MANUAL" } });
+  return wroteByHand > 0 ? "CREATOR_LIST_SENT" : "FIRST_EMAIL_SENT";
+}
+
+/**
  * Acts on an influencer's reply, read by lib/creatorReplyAI.ts. Anything the team has to answer —
  * a rate, interest, a question — stops the follow-ups and sets awaitingResponseSince, which is the
  * highlight on the Influencer Outreach page. A decline or opt-out stops them without the highlight;
@@ -242,10 +288,14 @@ async function handleCreatorReply(
   replies: { from: string; date: string }[],
   text: string,
   analysis: CreatorReplyAnalysis,
-  watermark: number
+  watermark: number,
+  late: LateReplyContext | null = null
 ): Promise<ThreadCheckResult> {
   const latest = replies[replies.length - 1];
   const from = latest.from;
+  // A late reply the team already dealt with by hand (set the stage, typed in the rate) shouldn't
+  // come back as "needs your reply" — they've seen it.
+  const alreadyHandled = handledAfter(late, latest.date);
   const common = {
     lastKnownMsgCount: watermark,
     lastReplyAt: replyDate(latest.date),
@@ -362,7 +412,12 @@ async function handleCreatorReply(
 
   let rateData = {};
   if (analysis.intent === "RATE_SHARED") {
-    const rates = mergeRates(parseStoredRates(seq.quotedRates), analysis.rates);
+    const stored = parseStoredRates(seq.quotedRates);
+    // Re-reading an older reply must not overwrite a price the team entered by hand since.
+    const incoming = late
+      ? analysis.rates.filter((r) => !stored.some((s) => s.source === "manual" && (s.deliverable ?? null) === (r.deliverable ?? null)))
+      : analysis.rates;
+    const rates = mergeRates(stored, incoming);
     const primary = primaryRate(rates);
     rateData = {
       quotedRates: rates,
@@ -373,18 +428,27 @@ async function handleCreatorReply(
     };
   }
 
-  if (!(await claimSequence(seq, { ...common, status: "REPLIED", stage, awaitingResponseSince: new Date(), ...rateData }))) {
+  if (
+    !(await claimSequence(seq, {
+      ...common,
+      status: "REPLIED",
+      stage,
+      awaitingResponseSince: alreadyHandled ? null : new Date(),
+      ...rateData,
+    }))
+  ) {
     return notClaimed;
   }
 
   const description =
-    analysis.intent === "RATE_SHARED"
+    (analysis.intent === "RATE_SHARED"
       ? analysis.rates.length > 0
         ? `${from} shared their rate: ${analysis.rates.map((rate) => formatRate(rate)).join(", ")}. Follow-ups stopped — reply to move it forward.`
         : `${from} shared a rate card or media kit — open the email to see their pricing. Follow-ups stopped.`
       : analysis.intent === "INTERESTED"
         ? `${from} is interested but hasn't given a rate yet — follow-ups stopped. Reply with what they asked for.`
-        : `${from} replied — follow-ups stopped. Have a look and reply.`;
+        : `${from} replied — follow-ups stopped. Have a look and reply.`) +
+    (alreadyHandled ? " You'd already updated this one by hand, so it isn't flagged as waiting on you." : "");
 
   await prisma.$transaction([
     cancelPending(),
@@ -407,11 +471,18 @@ async function handleCreatorReply(
  * internally, and a shorter, configurable delay, instead of silently reusing whatever cadence was
  * already in flight.
  */
-async function handleNonCommittalReply(seq: SequenceWithContact, from: string, newMessageCount: number) {
+async function handleNonCommittalReply(
+  seq: SequenceWithContact,
+  from: string,
+  newMessageCount: number,
+  replyFields: Record<string, unknown> = {}
+) {
   const creatorListAlreadySent = !PRE_LIST_STAGES.includes(seq.stage);
   const claimed = await claimSequence(seq, {
+    ...replyFields,
     status: "WAITING_FOR_REPLY",
     currentStep: 0,
+    awaitingResponseSince: null,
     lastKnownMsgCount: newMessageCount,
     ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
   });
@@ -457,7 +528,8 @@ async function handleNonCommittalReply(seq: SequenceWithContact, from: string, n
  */
 export async function checkThreadForTerminalEvent(
   gmail: gmail_v1.Gmail,
-  seq: SequenceWithContact
+  seq: SequenceWithContact,
+  options: { dormant?: boolean } = {}
 ): Promise<ThreadCheckResult> {
   const thread = await getThreadSummary(gmail, seq.threadId);
   const newMessages = thread.messages.slice(seq.lastKnownMsgCount);
@@ -471,14 +543,62 @@ export async function checkThreadForTerminalEvent(
 
   let sawOnlyAutoReplies = false;
   let msgCountSoFar = seq.lastKnownMsgCount;
-  const creatorListAlreadySent = !PRE_LIST_STAGES.includes(seq.stage);
   // A message is ours only when it comes from one of the team's connected inboxes (or a teammate on
   // the company's own domain). Anything else is the other side replying — including from a different
   // address than the one emailed: a creator's manager or agency, a brand colleague. This used to
   // require the exact contact address, so such replies (and mailer-daemon bounces) were mistaken for
   // a message the team had typed in Gmail, and the reply never showed.
   const isOurs = ownSenderMatcher((await prisma.emailAccount.findMany({ select: { email: true } })).map((a) => a.email));
-  const isFromContact = (msg: { from: string }) => !isOurs(msg.from);
+  // Read-tracking notices (Mailsuite's "your email hasn't been opened yet", Mailtrack pings) thread
+  // into the conversation but are neither side talking. Read as the contact, one used to overwrite
+  // a creator's real reply with "Reminder ⚠️ Your email to … has not been opened yet", flag them as
+  // needing an answer again, and could count as a reply from someone who never wrote back.
+  const isTrackingPing = (msg: { from: string }) => isTrackingNotification(emailAddressOf(msg.from));
+  const isFromContact = (msg: { from: string }) => !isOurs(msg.from) && !isTrackingPing(msg);
+
+  // A thread that had wrapped up with no reply just got a real message — someone answering late, or
+  // the team writing again by hand. Put the stage back to what it was before silence turned it into
+  // Not Interested, then read the message exactly as if the thread had never stopped.
+  let late: LateReplyContext | null = null;
+  if (options.dormant) {
+    const actionable = newMessages.some((m) => !isTrackingPing(m) && (isFromContact(m) ? !looksLikeAutoReply(m) : !knownIds.has(m.id)));
+    if (actionable) {
+      const lastTeamAction = await prisma.activityLog.findFirst({
+        where: { sequenceId: seq.id, eventType: { in: ["STAGE_CHANGED", "RATE_DETECTED", "REPLY_HANDLED"] } },
+        orderBy: { timestamp: "desc" },
+        select: { timestamp: true },
+      });
+      late = { teamActedAt: lastTeamAction?.timestamp ?? null };
+      const revived = seq.stage === "NOT_INTERESTED" ? await stageBeforeSilence(seq) : (seq.stage as PipelineStage);
+      await prisma.$transaction([
+        prisma.outreachSequence.update({ where: { id: seq.id }, data: { stage: revived } }),
+        prisma.activityLog.create({
+          data: {
+            sequenceId: seq.id,
+            eventType: "REPLY_CHECK_PERFORMED",
+            description:
+              revived !== seq.stage
+                ? `New message on a thread that had wrapped up with no reply — moved it back to ${CREATOR_STAGE_NAME[revived]} and reading it now.`
+                : "New message on a thread that had wrapped up with no reply — reading it now.",
+          },
+        }),
+      ]);
+      seq = { ...seq, stage: revived };
+    }
+  }
+  const creatorListAlreadySent = !PRE_LIST_STAGES.includes(seq.stage);
+
+  // What a brand wrote, recorded the same way the influencer reader records a creator's reply, so the
+  // Brand Outreach page can show who answered and what they said without opening every thread.
+  async function brandReplyFields(m: { id: string; date: string; snippet: string }, intent: string, needsAnswer: boolean) {
+    return {
+      lastReplyAt: replyDate(m.date),
+      lastReplyText: (await bodyOf(m)).slice(0, 4000) || null,
+      replyIntent: intent,
+      ...(seq.lastReplyAt ? {} : { repliedAfterStep: seq.currentStep }),
+      awaitingResponseSince: needsAnswer && !handledAfter(late, m.date) ? new Date() : null,
+    };
+  }
 
   // Full message bodies are fetched only when an influencer thread has a real reply to read. The
   // snippet is ~200 characters — exactly where a rate at the end of a friendly reply gets cut off.
@@ -497,6 +617,11 @@ export async function checkThreadForTerminalEvent(
 
   for (const [index, m] of newMessages.entries()) {
     msgCountSoFar++;
+    if (isTrackingPing(m)) {
+      // Nothing to act on — just make sure the watermark moves past it (see sawOnlyAutoReplies).
+      sawOnlyAutoReplies = true;
+      continue;
+    }
     const fromContact = isFromContact(m);
 
     if (!fromContact) {
@@ -544,6 +669,10 @@ export async function checkThreadForTerminalEvent(
       let end = index;
       while (end < newMessages.length) {
         const next = newMessages[end];
+        if (isTrackingPing(next)) {
+          end++;
+          continue;
+        }
         const nextFromContact = isFromContact(next);
         if (!nextFromContact && !knownIds.has(next.id)) break;
         if (nextFromContact && looksLikeBounce(next)) break;
@@ -567,7 +696,7 @@ export async function checkThreadForTerminalEvent(
         sawOnlyAutoReplies = true;
         continue;
       }
-      return handleCreatorReply(seq, batch, text, analysis, seq.lastKnownMsgCount + end);
+      return handleCreatorReply(seq, batch, text, analysis, seq.lastKnownMsgCount + end, late);
     }
 
     // Beyond the header-based auto-reply heuristic above: ask the LLM classifier (if configured)
@@ -588,12 +717,13 @@ export async function checkThreadForTerminalEvent(
     }
 
     if (classification === "NON_COMMITTAL") {
-      await handleNonCommittalReply(seq, m.from, thread.messages.length);
+      await handleNonCommittalReply(seq, m.from, thread.messages.length, await brandReplyFields(m, classification, false));
       return { terminal: false, manualSendDetected: false, rescheduled: true };
     }
 
     if (classification === "WANTS_CREATOR_LIST") {
       const claimed = await claimSequence(seq, {
+        ...(await brandReplyFields(m, classification, true)),
         status: "REPLIED",
         stage: "CREATOR_LIST_REQUESTED",
         lastKnownMsgCount: thread.messages.length,
@@ -621,6 +751,7 @@ export async function checkThreadForTerminalEvent(
 
     if (classification === "CREATOR_CHOSEN") {
       const claimed = await claimSequence(seq, {
+        ...(await brandReplyFields(m, classification, true)),
         status: "REPLIED",
         stage: "CREATOR_SELECTED",
         lastKnownMsgCount: thread.messages.length,
@@ -648,6 +779,7 @@ export async function checkThreadForTerminalEvent(
 
     if (classification === "OPT_OUT") {
       const claimed = await claimSequence(seq, {
+        ...(await brandReplyFields(m, classification, false)),
         status: "UNSUBSCRIBED",
         stage: "NOT_INTERESTED",
         lastKnownMsgCount: thread.messages.length,
@@ -677,6 +809,7 @@ export async function checkThreadForTerminalEvent(
 
     if (classification === "UNINTERESTED") {
       const claimed = await claimSequence(seq, {
+        ...(await brandReplyFields(m, classification, false)),
         status: "REPLIED",
         stage: "NOT_INTERESTED",
         lastKnownMsgCount: thread.messages.length,
@@ -702,6 +835,7 @@ export async function checkThreadForTerminalEvent(
     // Genuine, substantive human reply that doesn't fit any of the above — hand off to the team.
     {
       const claimed = await claimSequence(seq, {
+        ...(await brandReplyFields(m, "HUMAN_REPLY", true)),
         status: "REPLIED",
         lastKnownMsgCount: thread.messages.length,
         ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
@@ -743,15 +877,41 @@ export async function runContinuousReplyCheck() {
     // more active sequences than fit in one pass — the tail would go permanently unwatched.
     orderBy: { lastReplyCheckAt: { sort: "asc", nulls: "first" } },
   });
+  // Bounded so a growing number of active threads (or a slow Gmail API) can never eat the whole
+  // tick — anything left unchecked this pass just gets picked up on the next one. Reply detection
+  // tolerates that; a scheduled send does not, which is why runWorkerTick runs the due-send passes
+  // before this one and this one is the one with a cap.
+  return checkSequences(activeSequences, REPLY_CHECK_TIME_BUDGET_MS, false);
+}
 
+/**
+ * The slow sweep over threads that wrapped up with no reply (DORMANT_WHERE). A handful per pass,
+ * least-recently-checked first, so every one of them is looked at again every few hours without
+ * taking time from the threads still in play. `onlyIds` narrows it to threads the inbox sync just
+ * saw change, which is what catches a late reply within minutes rather than hours.
+ */
+export async function runDormantReplyCheck(onlyIds?: string[]) {
+  if (onlyIds && onlyIds.length === 0) return [];
+  const sequences = await prisma.outreachSequence.findMany({
+    where: {
+      AND: [DORMANT_WHERE, { emailAccount: { accessStatus: "CONNECTED" } }, ...(onlyIds ? [{ id: { in: onlyIds } }] : [])],
+    },
+    include: { contact: true, emailAccount: true },
+    orderBy: { lastReplyCheckAt: { sort: "asc", nulls: "first" } },
+    take: DORMANT_CHECK_BATCH,
+  });
+  return checkSequences(sequences, DORMANT_CHECK_TIME_BUDGET_MS, true);
+}
+
+async function checkSequences(
+  sequences: (SequenceWithContact & { emailAccount: { accessStatus: string } })[],
+  budgetMs: number,
+  dormant: boolean
+) {
   const results = [];
   const startedAt = Date.now();
-  for (const seq of activeSequences) {
-    // Bounded so a growing number of active threads (or a slow Gmail API) can never eat the
-    // whole tick — anything left unchecked this pass just gets picked up on the next one, 5
-    // minutes later. Reply detection tolerates that; a scheduled send does not, which is why
-    // runWorkerTick runs the due-send passes before this one and this one is the one with a cap.
-    if (Date.now() - startedAt > REPLY_CHECK_TIME_BUDGET_MS) break;
+  for (const seq of sequences) {
+    if (Date.now() - startedAt > budgetMs) break;
     if (seq.emailAccount.accessStatus !== "CONNECTED") continue;
     try {
       // Stamped before the check, not after, so a sequence whose check throws every time still
@@ -761,11 +921,11 @@ export async function runContinuousReplyCheck() {
         data: { lastReplyCheckAt: new Date() },
       });
       const gmail = await gmailClientFor(seq.emailAccountId);
-      const result = await checkThreadForTerminalEvent(gmail, seq);
+      const result = await checkThreadForTerminalEvent(gmail, seq, { dormant });
       if (result.terminal) results.push({ sequenceId: seq.id, event: result.status });
       else if (result.manualSendDetected) results.push({ sequenceId: seq.id, event: "MANUAL_MESSAGE_DETECTED" });
     } catch (err) {
-      console.error(`[continuous reply check] failed for sequence ${seq.id}:`, err);
+      console.error(`[${dormant ? "late" : "continuous"} reply check] failed for sequence ${seq.id}:`, err);
     }
   }
   return results;
@@ -1026,14 +1186,9 @@ async function processScheduledActionClaimed(
         status: next.status,
         currentStep: next.currentStep,
         lastKnownMsgCount: freshSeq.lastKnownMsgCount + 1,
-        // Silence through all 3 follow-ups reads as "not interested" for the pipeline view too —
-        // unless the team already made a manual call on this one (Negotiation/Creator
-        // Selected/Deal), which should never be overwritten by the automation.
-        // A creator who quoted a rate and then went quiet keeps Rate Received — that price is
-        // still the useful fact about them.
-        ...(next.status === "COMPLETED" && !MANUAL_OR_TERMINAL_STAGES.includes(seq.stage) && seq.stage !== "RATE_RECEIVED"
-          ? { stage: "NOT_INTERESTED" as const }
-          : {}),
+        // Silence through every follow-up reads as "not interested" for the pipeline view too —
+        // see stageAfterSilence for the cases that keep their stage.
+        ...(next.status === "COMPLETED" && stageAfterSilence(seq) ? { stage: "NOT_INTERESTED" as const } : {}),
       },
     }),
     prisma.activityLog.create({
@@ -1091,6 +1246,11 @@ async function processScheduledActionClaimed(
 // email that silently never goes out is not. Bounded so it always leaves headroom under the
 // tick route's 60s Vercel ceiling.
 const REPLY_CHECK_TIME_BUDGET_MS = 20_000;
+
+// The wrapped-up-thread sweep is deliberately small: most of these never get another message, and
+// the inbox sync catches the ones that do much sooner (see runWorkerTick).
+const DORMANT_CHECK_BATCH = 10;
+const DORMANT_CHECK_TIME_BUDGET_MS = 6_000;
 
 /** How long a tick can hold a row before another tick assumes it died mid-send and takes over. */
 const CLAIM_STALE_MS = 5 * 60 * 1000;
@@ -1266,6 +1426,7 @@ export async function runWorkerTick() {
   if (!state.lastReplyCheckAt || now - state.lastReplyCheckAt.getTime() >= REPLY_CHECK_INTERVAL_MS) {
     await prisma.workerHeartbeat.update({ where: { id: state.id }, data: { lastReplyCheckAt: new Date() } });
     replyResults = await runContinuousReplyCheck();
+    replyResults.push(...(await runDormantReplyCheck()));
     heavyPassRan = true;
   }
 
@@ -1273,7 +1434,15 @@ export async function runWorkerTick() {
   if (!heavyPassRan && (!state.lastInboxScanAt || now - state.lastInboxScanAt.getTime() >= INBOX_SCAN_INTERVAL_MS)) {
     await prisma.workerHeartbeat.update({ where: { id: state.id }, data: { lastInboxScanAt: new Date() } });
     try {
-      newMailFound = (await syncInbox()).threadsSynced;
+      const synced = await syncInbox();
+      newMailFound = synced.threadsSynced;
+      if (synced.sequenceIds.length > 0) {
+        // Something happened on these tracked threads: check them first on the next reply pass, and
+        // read any that had already wrapped up right now — that's the late reply the regular check
+        // would otherwise never see.
+        await prisma.outreachSequence.updateMany({ where: { id: { in: synced.sequenceIds } }, data: { lastReplyCheckAt: null } });
+        replyResults.push(...(await runDormantReplyCheck(synced.sequenceIds)));
+      }
     } catch (err) {
       // Same principle as the per-sequence try/catch inside runContinuousReplyCheck — a failure
       // scanning for new mail must never take down the rest of the tick (the due-sends above
