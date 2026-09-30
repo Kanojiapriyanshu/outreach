@@ -7,6 +7,7 @@ import { findKitTitleMatches, kitTitlesByKitId } from "@/lib/creatorSmartSearch"
 import InfluencerTabs from "../InfluencerTabs";
 import RosterFilters from "./RosterFilters";
 import CreatorsTable, { type RosterRow } from "./CreatorsTable";
+import GmailSyncButton from "./GmailSyncButton";
 
 // Emails and media kits land from the background worker at any moment — never serve a cached copy.
 export const dynamic = "force-dynamic";
@@ -129,9 +130,12 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
             Every creator you&apos;ve found or pitched, in one place — contact details, platforms, rates and media kits.
           </p>
         </div>
-        <a href={`/api/influencers/creators/export?${rosterQueryString(filters)}`} className="btn-secondary inline-flex items-center gap-1.5 px-3.5 py-2.5 text-sm">
-          <Download size={15} /> Export CSV
-        </a>
+        <div className="flex gap-2 flex-wrap">
+          <GmailSyncButton />
+          <a href={`/api/influencers/creators/export?${rosterQueryString(filters)}`} className="btn-secondary inline-flex items-center gap-1.5 px-3.5 py-2.5 text-sm">
+            <Download size={15} /> Export CSV
+          </a>
+        </div>
       </div>
 
       <InfluencerTabs active="creators" />

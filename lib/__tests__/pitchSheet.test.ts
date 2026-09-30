@@ -10,6 +10,7 @@ import {
   linkState,
 } from "../pitchSheet";
 import { matchSnippet, rosterWhere, searchTerms } from "../creatorRoster";
+import { looksLikeCreatorPitch } from "../creatorPitchRule";
 
 const NOW = new Date("2026-09-24T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -109,5 +110,14 @@ describe("smart search", () => {
     expect(hit?.label).toBe("In their reply");
     expect(hit?.snippet).toContain("smart lock review");
     expect(matchSnippet([{ label: "x", text: "nothing here" }], ["smart"])).toBeNull();
+  });
+});
+
+describe("Gmail creator-pitch rule", () => {
+  it("tells Fidem's creator pitches from its brand pitches by the opening", () => {
+    expect(looksLikeCreatorPitch("Fidem Growth × Cozy K — Paid Home/Lifestyle Collab", "Hello Kennedy, This is Yash from Fidem Growth — we work with US-based creators on paid brand collaborations. I've been following your content")).toBe(true);
+    expect(looksLikeCreatorPitch("Paid Brand Opportunity: HBADA", "Hello Adam, We have an exciting collaboration opportunity for you with Hbada. We have your proposed rate of $800 USD")).toBe(true);
+    expect(looksLikeCreatorPitch("HUANUO × Fidem Growth — Turning Your US Growth Into a Creator-Led Profit Engine", "Hello Ginman, The chair feels built for exactly the kind of content that converts on YouTube right now. We work with pre-vetted creators")).toBe(false);
+    expect(looksLikeCreatorPitch("Linkols × Fidem Growth — Campaign", "Hello Kaye, I saw you're leading the Twotrees campaign on the agency side, so I figured it made more sense to reach out agency-to-agency")).toBe(false);
   });
 });
