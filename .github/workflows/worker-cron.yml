@@ -1,6 +1,10 @@
 name: Worker tick
 
-# Keeps the app's worker ticking around the clock by calling /api/cron/tick every 30 seconds.
+# Keeps the app's worker ticking around the clock by calling /api/cron/tick. The app answers each
+# tick with when to call next (nextTickInSeconds, see lib/workerCadence.ts): every ~30s while emails
+# are going out, at the next scheduled send otherwise, and at most every 15 minutes (an hour at the
+# weekend) when there's nothing to send — so the free-plan database can sleep between ticks
+# instead of being kept awake all month.
 #
 # Why it's built as a chain rather than a schedule: GitHub's scheduler is best-effort and skips
 # triggers without retrying. Measured Sept 12-15, each 55-minute run was followed by 1-5 HOURS with
@@ -57,7 +61,7 @@ jobs:
             cat /tmp/dispatch.json 2>/dev/null || true
           fi
 
-      - name: Tick the worker every 30s for ~5h40m
+      - name: Tick the worker for ~5h40m, as often as the app asks
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           APP_URL: ${{ secrets.APP_URL }}
@@ -91,9 +95,19 @@ jobs:
               fi
             fi
 
-            # Hold a steady 30s cadence regardless of how long the request itself took.
+            # Wait as long as the app asked (30s-1h), counted from when this tick started. A failed
+            # tick or an older deploy that doesn't say falls back to the old 30s cadence.
+            # "|| true": GitHub runs this with pipefail, and a response without the field must not end the run.
+            wait_for=$(grep -o '"nextTickInSeconds":[0-9]*' /tmp/tick.json 2>/dev/null | head -n1 | cut -d: -f2 || true)
+            [ "$status" = "200" ] || wait_for=30
+            [ -n "${wait_for:-}" ] || wait_for=30
+            [ "$wait_for" -lt 30 ] && wait_for=30
+            [ "$wait_for" -gt 3600 ] && wait_for=3600
             elapsed=$(( $(date +%s) - started ))
-            sleep_for=$(( 30 - elapsed ))
+            sleep_for=$(( wait_for - elapsed ))
+            # Don't sleep past this run's end — the queued run takes over from there.
+            remaining=$(( END - $(date +%s) ))
+            [ "$sleep_for" -gt "$remaining" ] && sleep_for=$remaining
             [ "$sleep_for" -gt 0 ] && sleep "$sleep_for"
           done
           echo "Completed $ticks ticks; handing over to the queued run."

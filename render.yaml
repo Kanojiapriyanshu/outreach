@@ -1,3 +1,8 @@
+# Optional: an always-on worker on Render (a paid plan). The default worker is the free GitHub
+# Actions loop in .github/workflows/worker-cron.yml — run only one of the two. This one follows the
+# same low-usage schedule (lib/workerCadence.ts); setting WORKER_POLL_INTERVAL_MS would force a
+# fixed interval instead, and anything under ~6 minutes keeps the Neon database awake around the
+# clock.
 services:
   - type: worker
     name: fidem-outreach-worker
@@ -18,5 +23,3 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
-      - key: WORKER_POLL_INTERVAL_MS
-        value: "300000"

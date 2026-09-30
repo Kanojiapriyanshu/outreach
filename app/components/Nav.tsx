@@ -27,11 +27,13 @@ import {
   Plus,
   Search,
   ChevronDown,
+  RefreshCw,
 } from "lucide-react";
 import Logo from "./Logo";
 import ThemeToggle from "./ThemeToggle";
 import NotificationsBell from "./NotificationsBell";
 import { useNotifications } from "./useNotifications";
+import { useCatchUpSync } from "./useCatchUpSync";
 
 type NavLink = { href: string; label: string; icon: typeof Inbox; badge?: "unread" | "brands" | "influencers" };
 
@@ -273,7 +275,8 @@ function GlobalSearch() {
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const { threads, alerts, unreadCount, waiting } = useNotifications();
+  const { threads, alerts, unreadCount, waiting, reload } = useNotifications();
+  const { syncing } = useCatchUpSync(reload);
   const counts = { unread: unreadCount, brands: waiting.brands, influencers: waiting.influencers };
 
   return (
@@ -310,6 +313,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
           <GlobalSearch />
           <div className="ml-auto flex items-center gap-1">
+            {syncing && (
+              <span className="hidden sm:inline-flex items-center gap-1.5 mr-2 text-xs text-[var(--muted)]" role="status">
+                <RefreshCw size={13} className="animate-spin" /> Syncing Gmail…
+              </span>
+            )}
             <ThemeToggle compact />
             <NotificationsBell threads={threads} alerts={alerts} unreadCount={unreadCount} />
             <div className="ml-2">
