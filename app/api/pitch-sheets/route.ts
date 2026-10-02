@@ -74,6 +74,20 @@ export async function POST(req: NextRequest) {
     },
   });
 
+  // The price just quoted to a brand becomes the creator's brand pitch rate. The real rate is
+  // never touched from here.
+  const priced = included.filter((i) => typeof i.brandRate === "number" && Number.isFinite(i.brandRate) && i.brandRate > 0);
+  if (priced.length > 0) {
+    await prisma.$transaction(
+      priced.map((i) =>
+        prisma.creator.update({
+          where: { id: i.creatorId },
+          data: { pitchRateAmount: i.brandRate, pitchRateCurrency: clean(i.brandRateCurrency, 3)?.toUpperCase() ?? null, pitchRateDeliverable: clean(i.deliverable, 60) },
+        })
+      )
+    );
+  }
+
   const base = appBaseUrl(req.nextUrl.origin);
   return NextResponse.json({
     id: sheet.id,

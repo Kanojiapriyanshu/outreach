@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { Download } from "lucide-react";
 import { Kpi, KpiGrid, PageHeader, Pager } from "@/app/components/ui";
 import { prisma } from "@/lib/prisma";
+import { parseStoredRates } from "@/lib/creatorReplyAnalysis";
 import { matchSnippet, parseRosterFilters, rosterOrderBy, rosterQueryString, rosterWhere, searchTerms } from "@/lib/creatorRoster";
 import { findKitTitleMatches, kitTitlesByKitId } from "@/lib/creatorSmartSearch";
 import InfluencerTabs from "../InfluencerTabs";
@@ -64,6 +65,7 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
   const kitTitles = terms.length > 0 ? await kitTitlesByKitId(creators.map((c) => c.mediaKitId ?? "")) : new Map<string, string[]>();
 
   const rows: RosterRow[] = creators.map((c) => {
+    const card = parseStoredRates(c.rateCard).map(({ amount, currency, deliverable }) => ({ amount, currency, deliverable }));
     const sequence = c.contacts.flatMap((contact) => contact.sequences).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
     const replied = !!sequence && (!!sequence.lastReplyAt || sequence.status === "REPLIED" || sequence.status === "UNSUBSCRIBED");
     return {
@@ -87,6 +89,14 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
         c.quotedRateAmount !== null
           ? { amount: c.quotedRateAmount, currency: c.quotedRateCurrency, deliverable: c.quotedRateDeliverable, at: c.quotedRateAt?.toISOString() ?? null }
           : null,
+      rateCard:
+        card.length > 0
+          ? card
+          : c.quotedRateAmount !== null
+            ? [{ amount: c.quotedRateAmount, currency: c.quotedRateCurrency, deliverable: c.quotedRateDeliverable }]
+            : [],
+      rateNote: c.rateNote,
+      pitchRate: c.pitchRateAmount !== null ? { amount: c.pitchRateAmount, currency: c.pitchRateCurrency, deliverable: c.pitchRateDeliverable } : null,
       outreach: sequence
         ? {
             sequenceId: sequence.id,
@@ -110,7 +120,7 @@ export default async function CreatorsRosterPage({ searchParams }: { searchParam
           { label: "Their content", text: c.contentHighlights ?? c.niche },
           { label: "Channel description", text: c.description },
           { label: "Your notes", text: c.notes },
-          { label: "Their rate", text: [c.quotedRateDeliverable, sequence?.rateNote].filter(Boolean).join(" · ") || null },
+          { label: "Their rate", text: [c.quotedRateDeliverable, c.rateNote, sequence?.rateNote].filter(Boolean).join(" · ") || null },
         ],
         terms
       ),

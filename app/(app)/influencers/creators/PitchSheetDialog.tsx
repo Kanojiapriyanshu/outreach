@@ -39,6 +39,18 @@ function priceFor(row: RosterRow, margin: string): string {
   return value === null ? "" : String(value);
 }
 
+/** What the brand-rate box starts with: the creator's saved brand pitch rate, else real rate + margin. */
+function startingDraft(row: RosterRow): RowDraft {
+  const pitch = row.pitchRate;
+  return {
+    deliverable: pitch?.deliverable ?? row.rate?.deliverable ?? "",
+    brandRate: pitch ? String(pitch.amount) : priceFor(row, savedMargin()),
+    currency: pitch?.currency ?? row.rate?.currency ?? "USD",
+    rateNote: "",
+    hasKit: !!row.mediaKitToken,
+  };
+}
+
 /**
  * Turn the selected creators into one no-login link for a brand — their channel, media kit and
  * the price we quote. Nothing is emailed from here: the team gets the link and a ready-made email
@@ -69,12 +81,7 @@ export default function PitchSheetDialog({ rows, onClose }: { rows: RosterRow[];
   const [days, setDays] = useState<number>(30);
   const [margin, setMargin] = useState(savedMargin);
   const [drafts, setDrafts] = useState<Record<string, RowDraft>>(() =>
-    Object.fromEntries(
-      eligible.map((r) => [
-        r.id,
-        { deliverable: r.rate?.deliverable ?? "", brandRate: priceFor(r, savedMargin()), currency: r.rate?.currency ?? "USD", rateNote: "", hasKit: !!r.mediaKitToken },
-      ])
-    )
+    Object.fromEntries(eligible.map((r) => [r.id, startingDraft(r)]))
   );
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -94,7 +101,10 @@ export default function PitchSheetDialog({ rows, onClose }: { rows: RosterRow[];
     } catch {
       // Remembering the margin is a convenience only.
     }
-    setDrafts((d) => Object.fromEntries(ready.map((r) => [r.id, { ...d[r.id], brandRate: priceFor(r, margin) }])));
+    // Worked out from the real rate, so it goes back to the real rate's currency too.
+    setDrafts((d) =>
+      Object.fromEntries(ready.map((r) => [r.id, r.rate ? { ...d[r.id], brandRate: priceFor(r, margin), currency: r.rate.currency ?? d[r.id].currency } : d[r.id]]))
+    );
   }
 
   async function makeMissingKits() {
@@ -290,7 +300,7 @@ export default function PitchSheetDialog({ rows, onClose }: { rows: RosterRow[];
                   </div>
                 </div>
                 <div>
-                  <span className="block text-xs font-medium text-[var(--muted)] mb-1">Your margin on their rate</span>
+                  <span className="block text-xs font-medium text-[var(--muted)] mb-1">Your margin on their real rate</span>
                   <div className="flex items-center gap-1.5">
                     <input className="input py-1 text-sm" style={{ width: 64 }} inputMode="numeric" value={margin} onChange={(e) => setMargin(e.target.value)} aria-label="Margin percent" />
                     <span className="text-sm text-[var(--muted)]">%</span>
@@ -323,7 +333,7 @@ export default function PitchSheetDialog({ rows, onClose }: { rows: RosterRow[];
                           <div className="text-sm font-medium text-[var(--ink)] truncate">{r.name}</div>
                           <div className="text-[11px] text-[var(--muted-2)]">
                             {r.rate
-                              ? `They quoted ${formatMoney(r.rate.amount, r.rate.currency)}${r.rate.deliverable ? ` · ${r.rate.deliverable}` : ""}`
+                              ? `Real rate ${formatMoney(r.rate.amount, r.rate.currency)}${r.rate.deliverable ? ` · ${r.rate.deliverable}` : ""}`
                               : r.rateNoAmount
                                 ? "Rate received · no fixed price"
                                 : "Replied · no rate yet"}
@@ -383,7 +393,7 @@ export default function PitchSheetDialog({ rows, onClose }: { rows: RosterRow[];
                   ))}
                 </div>
                 <p className="text-[11px] text-[var(--muted-2)] mt-2">
-                  The brand sees each creator&apos;s channel, media kit and the rate in the brand-rate box. Their own quote, email and your notes stay private.
+                  The brand sees each creator&apos;s channel, media kit and the rate in the brand-rate box — that price is also saved as the creator&apos;s brand pitch rate. Their real rate, email and your notes stay private.
                 </p>
               </div>
             </>

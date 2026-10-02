@@ -426,10 +426,9 @@ async function handleCreatorReply(
   let rateData = {};
   if (analysis.intent === "RATE_SHARED") {
     const stored = parseStoredRates(seq.quotedRates);
-    // Re-reading an older reply must not overwrite a price the team entered by hand since.
-    const incoming = late
-      ? analysis.rates.filter((r) => !stored.some((s) => s.source === "manual" && (s.deliverable ?? null) === (r.deliverable ?? null)))
-      : analysis.rates;
+    // A price on file is the team's to change — an email only adds prices for deliverables that
+    // have none yet, and never replaces one.
+    const incoming = analysis.rates.filter((r) => !stored.some((s) => (s.deliverable ?? null) === (r.deliverable ?? null)));
     const rates = mergeRates(stored, incoming);
     const primary = primaryRate(rates);
     rateData = {

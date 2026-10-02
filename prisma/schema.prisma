@@ -432,13 +432,29 @@ model Creator {
   mediaKitGeneratedAt DateTime?
   mediaKitRequestedAt DateTime?
   /**
-   * Their most recent quoted rate, copied from whichever outreach thread recorded it (or entered
-   * by hand), so the roster shows a price per creator without digging through threads.
+   * Their real rate — what the creator charges us. The headline price, filled in from the first
+   * rate they email (or by hand); once anything is on file only the team changes it. Never shown
+   * to a brand.
    */
   quotedRateAmount      Float?
   quotedRateCurrency    String?
   quotedRateDeliverable String?
   quotedRateAt          DateTime?
+  /**
+   * The full real rate card, as QuotedRate[] — every deliverable they price, entered by hand or
+   * from the team's rate sheet. When this (or rateNote) is set it owns the headline above, and no
+   * email ever changes it.
+   */
+  rateCard              Json      @default("[]")
+  /** Terms that go with the real rate, e.g. "plus the product and 10% affiliate". */
+  rateNote              String?
+  /**
+   * The brand pitch rate — what we quote a brand for this creator (real rate plus our margin).
+   * Edited by hand, and refreshed with the price last put on a pitch sheet.
+   */
+  pitchRateAmount       Float?
+  pitchRateCurrency     String?
+  pitchRateDeliverable  String?
 
   /**
    * Kept off the public creator roster (/roster) even though they qualify for it (interested or

@@ -17,14 +17,27 @@ async function creatorIdForSequence(sequenceId: string): Promise<string | null> 
   return sequence?.contact.creatorId ?? null;
 }
 
-/** Copies the sequence's headline rate onto its creator, so the roster shows one price per person. */
-export async function syncCreatorRateFromSequence(sequenceId: string): Promise<void> {
+/**
+ * Copies the sequence's headline rate onto its creator, so the roster shows one price per person.
+ *
+ * The creator's real rate is the team's to change: a rate read from an email only fills an empty
+ * slot, and a rate card entered on the creator (from the rate sheet or by hand) is never touched
+ * from a thread at all. `byHand` is the team editing the thread's rate themselves.
+ */
+export async function syncCreatorRateFromSequence(sequenceId: string, { byHand = false }: { byHand?: boolean } = {}): Promise<void> {
   const sequence = await prisma.outreachSequence.findUnique({
     where: { id: sequenceId },
-    select: { quotedRates: true, quotedRateAt: true, contact: { select: { creatorId: true } } },
+    select: {
+      quotedRates: true,
+      quotedRateAt: true,
+      contact: { select: { creatorId: true, creator: { select: { quotedRateAt: true, rateCard: true, rateNote: true } } } },
+    },
   });
   const creatorId = sequence?.contact.creatorId;
-  if (!sequence || !creatorId) return;
+  const creator = sequence?.contact.creator;
+  if (!sequence || !creatorId || !creator) return;
+  if (parseStoredRates(creator.rateCard).length > 0 || creator.rateNote) return;
+  if (!byHand && creator.quotedRateAt) return;
   const primary = primaryRate(parseStoredRates(sequence.quotedRates));
   await prisma.creator.update({
     where: { id: creatorId },
