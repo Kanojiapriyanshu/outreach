@@ -6,6 +6,7 @@ import { computeNextScheduledAt } from "@/lib/scheduler";
 import { addCalendarDays, clampToSendingWindow, sendingWindowFor } from "@/lib/businessDays";
 import { MAX_FOLLOW_UPS, type SequenceStatus } from "@/lib/stateMachine";
 import { formatDateTime } from "@/lib/formatDate";
+import { mentionsRosterLink } from "@/lib/sharedLinks";
 
 export type RecipientType = "DIRECT" | "AGENCY";
 
@@ -173,6 +174,8 @@ async function finalizeSequence(
       // stage to Not Interested — mirror that here for a sequence attached already at that point,
       // so it doesn't sit shown as "First Email Sent" despite being done.
       stage: startingStep >= MAX_FOLLOW_UPS ? "NOT_INTERESTED" : undefined,
+      // A first email that already carries the roster link counts as the roster being shared.
+      rosterSentAt: input.outreachType === "BRAND" && mentionsRosterLink(input.body) ? new Date() : undefined,
       variables: deriveVariables(input),
     },
   });
@@ -449,6 +452,13 @@ export interface PlainEmailInput {
   subject: string;
   html: string;
   attachments?: OutgoingAttachment[];
+  /**
+   * Set when this is a reply into an existing conversation scheduled for later, rather than a new
+   * email: it's sent through lib/threadReply.ts so the thread's follow-ups and pipeline stage are
+   * handled exactly as for a reply sent on the spot. `to` and `subject` above are what the
+   * Scheduled page shows; the reply itself re-reads who to answer when it actually goes out.
+   */
+  reply?: { inboxThreadId: string; sequenceId: string | null; followUp: "auto" | "none"; stage: "auto" | "keep" | "list-sent" };
 }
 
 export type SchedulePlainEmailResult = { ok: true; scheduledId: string; scheduledAt: Date } | { ok: false; error: string };
@@ -561,6 +571,34 @@ async function sendClaimedPlainEmail(scheduledId: string, payload: PlainEmailInp
     const tomorrow = clampToSendingWindow(addCalendarDays(new Date(), 1), settings);
     await prisma.scheduledInitialEmail.update({ where: { id: scheduledId }, data: { scheduledAt: tomorrow } });
     return { skipped: true, reason: `Daily send limit reached for ${emailAccount.email}; rescheduled to ${formatDateTime(tomorrow)}` };
+  }
+
+  if (payload.reply) {
+    // Loaded here rather than at the top: threadReply imports the scheduler, which imports this file.
+    const { sendThreadReply } = await import("@/lib/threadReply");
+    const result = await sendThreadReply(payload.reply.inboxThreadId, {
+      html: payload.html,
+      cc: payload.cc,
+      bcc: payload.bcc,
+      attachments: payload.attachments,
+      followUp: payload.reply.followUp,
+      stage: payload.reply.stage,
+    });
+    if (result.ok) {
+      await prisma.scheduledInitialEmail.update({
+        where: { id: scheduledId },
+        data: { status: "SENT", sentAt: new Date(), sentSequenceId: result.sequenceId },
+      });
+      return { sent: true };
+    }
+    await prisma.scheduledInitialEmail.update({ where: { id: scheduledId }, data: { status: "FAILED", error: result.error } });
+    // A reply that couldn't go out puts the thread back in front of the team.
+    if (payload.reply.sequenceId) {
+      await prisma.outreachSequence
+        .updateMany({ where: { id: payload.reply.sequenceId, awaitingResponseSince: null }, data: { awaitingResponseSince: new Date() } })
+        .catch(() => undefined);
+    }
+    return { sent: false, error: result.error };
   }
 
   try {

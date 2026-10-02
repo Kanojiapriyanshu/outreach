@@ -7,6 +7,10 @@ import { formatAgo, formatDateTime } from "@/lib/formatDate";
 import { brandReplyLabel } from "@/lib/brandOutreach";
 import Badge, { StageBadge } from "@/app/components/Badge";
 import MarkHandledButton from "@/app/components/MarkHandledButton";
+import ReplyPanel from "@/app/components/ReplyPanel";
+import RosterSentToggle from "@/app/components/RosterSentToggle";
+import { headers } from "next/headers";
+import { appBaseUrl } from "@/lib/pitchSheetServer";
 import SequenceControls from "./SequenceControls";
 import StageControl from "./StageControl";
 import UpcomingFollowUpPreview from "./UpcomingFollowUpPreview";
@@ -33,7 +37,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
       // A brand reply recorded before reply text was stored still shows — read from the inbox mirror.
       inboxThreads: {
         take: 1,
-        select: { messages: { where: { direction: "IN" }, orderBy: { sentAt: "desc" }, take: 1, select: { snippet: true, bodyText: true } } },
+        select: { id: true, messages: { where: { direction: "IN" }, orderBy: { sentAt: "desc" }, take: 1, select: { snippet: true, bodyText: true } } },
       },
     },
   });
@@ -66,6 +70,8 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
   const creator = sequence.contact.creator;
   const accent = isCreator ? "var(--influencers-accent)" : "var(--brands-accent)";
   const accentLight = isCreator ? "var(--influencers-accent-light)" : "var(--brands-accent-light)";
+  const h = await headers();
+  const rosterUrl = `${appBaseUrl(`${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`)}/roster`;
   const mirroredReply = sequence.inboxThreads[0]?.messages[0];
   const brandReplyText = sequence.lastReplyText ?? mirroredReply?.bodyText?.trim() ?? mirroredReply?.snippet ?? null;
 
@@ -95,6 +101,16 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
             <a href={gmailThreadLink(sequence.threadId)} target="_blank" rel="noopener noreferrer" className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs">
               Open in Gmail <ExternalLink size={12} />
             </a>
+            {sequence.inboxThreads[0] && !sequence.deletedAt && (
+              <ReplyPanel
+                threadId={sequence.inboxThreads[0].id}
+                name={companyOrCreatorName(sequence.contact) === "—" ? sequence.contact.name : companyOrCreatorName(sequence.contact)}
+                workspace={isCreator ? "influencers" : "brands"}
+                stage={sequence.stage}
+                variant="primary"
+                rosterUrl={rosterUrl}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -240,6 +256,16 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
             {!isCreator && brand?.category && <Detail label="Sells">{brand.category}</Detail>}
             {!isCreator && <Detail label="Budget">{budgetLabel(brand?.budgetRangeText ?? null, brand?.budgetType ?? "UNKNOWN")}</Detail>}
             {!isCreator && <Detail label="Channel size">{influencerRangeLabel(brand?.influencerRangeMin ?? null, brand?.influencerRangeMax ?? null)}</Detail>}
+            {!isCreator && (
+              <Detail label="Roster">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span style={sequence.rosterSentAt ? { color: "var(--success-fg)" } : { color: "var(--muted-2)" }}>
+                    {sequence.rosterSentAt ? `Shared ${formatDateTime(sequence.rosterSentAt)}` : "Not shared yet"}
+                  </span>
+                  <RosterSentToggle sequenceId={sequence.id} sent={!!sequence.rosterSentAt} />
+                </div>
+              </Detail>
+            )}
             {!isCreator && brand?.website && (
               <Detail label="Website">
                 <a href={brand.website.startsWith("http") ? brand.website : `https://${brand.website}`} target="_blank" rel="noopener noreferrer" className="hover:underline break-all" style={{ color: "var(--brand-teal-dark)" }}>

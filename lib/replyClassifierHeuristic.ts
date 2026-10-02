@@ -29,6 +29,9 @@ const WANTS_LIST_REQUEST_PATTERNS = [
   /\bshare\s+(the\s+)?(media\s*kit|profiles|creators)\b/i,
   /\bcan\s+you\s+send\b/i,
   /\bplease\s+send\b/i,
+  // "Do you have a list of creators who…", "could you provide your roster" — asking to see who we
+  // work with, without the word "send".
+  /\b(do\s+you\s+have|have\s+you\s+got|(could|can|would)\s+you\s+(provide|share|recommend|suggest))\b.{0,60}\b(list|roster|shortlist|creators?|influencers?|kols?|profiles)\b/i,
 ];
 const WANTS_LIST_INTEREST_PATTERNS = [
   /\bsounds?\s+(good|great|exciting|interesting)\b/i,

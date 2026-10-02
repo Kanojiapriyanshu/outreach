@@ -49,6 +49,24 @@ export function stageAfterSilence(seq: { outreachType: string; stage: string; la
   return "NOT_INTERESTED";
 }
 
+/**
+ * What a reply written by the team means for a brand's pipeline stage. "auto": a brand that asked
+ * for the creator list has now been answered, so it moves to Creator List Sent. "keep": leave the
+ * stage alone (the reply was a question, a holding note…). "list-sent": mark the list as sent
+ * whatever stage it was at.
+ */
+export type ReplyStageChoice = "auto" | "keep" | "list-sent";
+
+// A reply never moves a thread out of a stage the team set by hand or that ends the pipeline.
+const STAGES_A_REPLY_LEAVES_ALONE = [...MANUAL_OR_TERMINAL_STAGES, "CREATOR_LIST_SENT"];
+
+/** The stage a brand thread moves to when the team replies, or null to leave it as it is. */
+export function stageAfterReply(outreachType: string, stage: string, choice: ReplyStageChoice): "CREATOR_LIST_SENT" | null {
+  if (outreachType !== "BRAND" || choice === "keep" || STAGES_A_REPLY_LEAVES_ALONE.includes(stage)) return null;
+  if (choice === "list-sent") return "CREATOR_LIST_SENT";
+  return stage === "CREATOR_LIST_REQUESTED" ? "CREATOR_LIST_SENT" : null;
+}
+
 export interface SequenceState {
   status: SequenceStatus;
   currentStep: number; // 0 = only Email 1 sent, 1-3 = that follow-up has been sent

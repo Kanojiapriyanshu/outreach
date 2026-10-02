@@ -493,6 +493,12 @@ model OutreachSequence {
    */
   creatorListResponseAt DateTime?
   /**
+   * When the public creator roster (/roster) was first shared in this thread — set automatically
+   * when an email we send contains the roster link, or by hand from the thread page. Kept apart
+   * from the stage: a brand can get the roster first and a tailored shortlist later.
+   */
+  rosterSentAt          DateTime?
+  /**
    * Gmail-style star — a manual "don't lose track of this one" flag, independent of pipeline
    * stage or status.
    */

@@ -15,6 +15,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
   if (scheduled.status === "PENDING") {
     await prisma.scheduledInitialEmail.update({ where: { id }, data: { status: "CANCELLED" } });
+    // A cancelled scheduled reply means their message is unanswered again.
+    await setReplyThreadWaiting(scheduled.payload, true);
     return NextResponse.json({ ok: true, cancelled: true });
   }
 
@@ -49,5 +51,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     where: { id },
     data: { scheduledAt: newDate, status: "PENDING", error: null },
   });
+  await setReplyThreadWaiting(scheduled.payload, false);
   return NextResponse.json({ ok: true });
+}
+
+/**
+ * For a scheduled reply into an outreach thread: whether that thread is waiting on the team again
+ * (the reply was cancelled) or is taken care of (it's queued to send). No-op for anything else.
+ */
+async function setReplyThreadWaiting(payload: unknown, waiting: boolean) {
+  const sequenceId = (payload as { reply?: { sequenceId?: string | null } } | null)?.reply?.sequenceId;
+  if (!sequenceId) return;
+  await prisma.outreachSequence
+    .updateMany({
+      where: { id: sequenceId, awaitingResponseSince: waiting ? null : { not: null } },
+      data: { awaitingResponseSince: waiting ? new Date() : null },
+    })
+    .catch(() => undefined);
 }

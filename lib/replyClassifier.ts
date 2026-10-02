@@ -75,7 +75,7 @@ ${situational}
 Reply the label only, no other text.
 
 Snippet:
-"""${snippet.slice(0, 1000)}"""`,
+"""${snippet.slice(0, 1500)}"""`,
         },
       ],
     });

@@ -11,7 +11,8 @@ export const BRAND_VIEWS = [
   { key: "all", label: "All" },
   { key: "needs-response", label: "Needs your reply" },
   { key: "wants-list", label: "Wants creators" },
-  { key: "list-sent", label: "List sent" },
+  { key: "list-sent", label: "Creators sent" },
+  { key: "roster-sent", label: "Roster link sent" },
   { key: "in-talks", label: "In talks" },
   { key: "deals", label: "Deals" },
   { key: "following-up", label: "Following up" },
@@ -45,6 +46,8 @@ export function brandViewWhere(view: BrandView): Prisma.OutreachSequenceWhereInp
       return { awaitingResponseSince: { not: null } };
     case "wants-list":
       return { stage: "CREATOR_LIST_REQUESTED" };
+    case "roster-sent":
+      return { rosterSentAt: { not: null } };
     case "list-sent":
       return { stage: "CREATOR_LIST_SENT" };
     case "in-talks":

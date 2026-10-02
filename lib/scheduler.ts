@@ -21,6 +21,8 @@ import { requestCreatorMediaKit, syncCreatorRateFromSequence } from "@/lib/creat
 import { emailAddressOf, ownSenderMatcher } from "@/lib/senderIdentity";
 import { isTrackingNotification } from "@/lib/trackingSenders";
 import { BURST_TICK_SECONDS, nextTickDelaySeconds } from "@/lib/workerCadence";
+import { isGmailReaction, mightBeGmailReaction } from "@/lib/replyNoise";
+import { mentionsRosterLink } from "@/lib/sharedLinks";
 import type { gmail_v1 } from "googleapis";
 import { renderTemplate } from "@/lib/templates";
 import { advanceState, MAX_FOLLOW_UPS, MANUAL_OR_TERMINAL_STAGES, stageAfterSilence, type SequenceState } from "@/lib/stateMachine";
@@ -75,6 +77,7 @@ type SequenceWithContact = {
   creatorListResponseAt: Date | null;
   lastReplyAt: Date | null;
   quotedRateAt: Date | null;
+  rosterSentAt: Date | null;
   quotedRates: unknown;
   contact: { name: string; email: string };
 };
@@ -127,10 +130,13 @@ export function computeNextScheduledAt(outreachType: "BRAND" | "CREATOR", step: 
  */
 async function handleManualOutboundMessage(
   seq: SequenceWithContact,
-  message: { id: string; subject: string },
+  message: { id: string; subject: string; text: string },
   newMessageCount: number
 ) {
   const isCreator = seq.outreachType === "CREATOR";
+  // The team pasted the public roster link into an email they typed in Gmail: that's the roster
+  // shared with this brand, recorded the same as if it had been sent from the CRM.
+  const sharedRoster = !isCreator && !seq.rosterSentAt && mentionsRosterLink(message.text);
   // The influencer cadence exists to get a rate. Once there is one, the thread is a human
   // negotiation and the team writing back is part of it — not the start of a new cadence. Treating
   // it as one sent canned "just checking in on my last message" nudges to creators who had already
@@ -151,8 +157,14 @@ async function handleManualOutboundMessage(
     lastKnownMsgCount: newMessageCount,
     // The team just wrote back, so any reply that was waiting on them has been answered.
     awaitingResponseSince: null,
+    ...(sharedRoster ? { rosterSentAt: new Date() } : {}),
   });
   if (!claimed) return; // another concurrent check already picked up this same message
+  if (sharedRoster) {
+    await prisma.activityLog.create({
+      data: { sequenceId: seq.id, eventType: "STAGE_CHANGED", description: "Roster shared — your email included the public roster link." },
+    });
+  }
 
   const recordManualSend = prisma.emailMessage.create({
     data: {
@@ -629,7 +641,7 @@ export async function checkThreadForTerminalEvent(
       // Outbound message — either one this system sent (already in EmailMessage) or one the team
       // typed directly into Gmail. Only the latter is a new event worth acting on.
       if (!knownIds.has(m.id)) {
-        await handleManualOutboundMessage(seq, { id: m.id, subject: m.subject }, msgCountSoFar);
+        await handleManualOutboundMessage(seq, { id: m.id, subject: m.subject, text: await bodyOf(m) }, msgCountSoFar);
         return { terminal: false, manualSendDetected: true };
       }
       continue;
@@ -662,6 +674,20 @@ export async function checkThreadForTerminalEvent(
       continue;
     }
 
+    // An emoji reaction is an email too, but not an answer: don't read it as a reply, don't flag the
+    // thread, and keep whatever they actually wrote before it.
+    if (isGmailReaction(m.snippet) || (mightBeGmailReaction(m.snippet) && isGmailReaction(await bodyOf(m)))) {
+      await prisma.activityLog.create({
+        data: {
+          sequenceId: seq.id,
+          eventType: "AUTO_REPLY_DETECTED",
+          description: `${m.from} reacted to your email with an emoji — nothing to answer.`,
+        },
+      });
+      sawOnlyAutoReplies = true;
+      continue;
+    }
+
     if (seq.outreachType === "CREATOR") {
       // Consecutive replies up to the team's own next message are read as one answer, so a quick
       // "Hi!" followed by "my rate is $900" doesn't leave the rate unread behind the greeting.
@@ -677,7 +703,7 @@ export async function checkThreadForTerminalEvent(
         const nextFromContact = isFromContact(next);
         if (!nextFromContact && !knownIds.has(next.id)) break;
         if (nextFromContact && looksLikeBounce(next)) break;
-        if (nextFromContact && !looksLikeAutoReply(next)) batch.push(next);
+        if (nextFromContact && !looksLikeAutoReply(next) && !isGmailReaction(next.snippet)) batch.push(next);
         end++;
       }
       const texts: string[] = [];
@@ -703,7 +729,10 @@ export async function checkThreadForTerminalEvent(
     // Beyond the header-based auto-reply heuristic above: ask the LLM classifier (if configured)
     // for the nuance a header can't catch — a real answer vs. a non-answer vs. wanting the
     // creator list vs. having chosen one vs. a decline vs. an explicit opt-out.
-    const classification = await classifyReply(m.snippet, { creatorListAlreadySent });
+    // Read from the body, not the ~200-character snippet: a brand's actual ask ("do you have a list
+    // of creators for our security cameras?") is often a paragraph in, past the pleasantries. Capped
+    // so a long signature or legal footer can't steer the read.
+    const classification = await classifyReply((await bodyOf(m)).slice(0, 1500) || m.snippet, { creatorListAlreadySent });
 
     if (classification === "AUTO_REPLY") {
       await prisma.activityLog.create({
@@ -718,7 +747,7 @@ export async function checkThreadForTerminalEvent(
     }
 
     if (classification === "NON_COMMITTAL") {
-      await handleNonCommittalReply(seq, m.from, thread.messages.length, await brandReplyFields(m, classification, false));
+      await handleNonCommittalReply(seq, m.from, msgCountSoFar, await brandReplyFields(m, classification, false));
       return { terminal: false, manualSendDetected: false, rescheduled: true };
     }
 
@@ -727,7 +756,7 @@ export async function checkThreadForTerminalEvent(
         ...(await brandReplyFields(m, classification, true)),
         status: "REPLIED",
         stage: "CREATOR_LIST_REQUESTED",
-        lastKnownMsgCount: thread.messages.length,
+        lastKnownMsgCount: msgCountSoFar,
         ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
       });
       if (!claimed) return { terminal: false, manualSendDetected: false };
@@ -755,7 +784,7 @@ export async function checkThreadForTerminalEvent(
         ...(await brandReplyFields(m, classification, true)),
         status: "REPLIED",
         stage: "CREATOR_SELECTED",
-        lastKnownMsgCount: thread.messages.length,
+        lastKnownMsgCount: msgCountSoFar,
         ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
       });
       if (!claimed) return { terminal: false, manualSendDetected: false };
@@ -783,7 +812,7 @@ export async function checkThreadForTerminalEvent(
         ...(await brandReplyFields(m, classification, false)),
         status: "UNSUBSCRIBED",
         stage: "NOT_INTERESTED",
-        lastKnownMsgCount: thread.messages.length,
+        lastKnownMsgCount: msgCountSoFar,
         ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
       });
       if (!claimed) return { terminal: false, manualSendDetected: false };
@@ -813,7 +842,7 @@ export async function checkThreadForTerminalEvent(
         ...(await brandReplyFields(m, classification, false)),
         status: "REPLIED",
         stage: "NOT_INTERESTED",
-        lastKnownMsgCount: thread.messages.length,
+        lastKnownMsgCount: msgCountSoFar,
         ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
       });
       if (!claimed) return { terminal: false, manualSendDetected: false };
@@ -838,7 +867,7 @@ export async function checkThreadForTerminalEvent(
       const claimed = await claimSequence(seq, {
         ...(await brandReplyFields(m, "HUMAN_REPLY", true)),
         status: "REPLIED",
-        lastKnownMsgCount: thread.messages.length,
+        lastKnownMsgCount: msgCountSoFar,
         ...(creatorListAlreadySent ? { creatorListResponseAt: new Date() } : {}),
       });
       if (!claimed) return { terminal: false, manualSendDetected: false };
@@ -1190,6 +1219,8 @@ async function processScheduledActionClaimed(
         // Silence through every follow-up reads as "not interested" for the pipeline view too —
         // see stageAfterSilence for the cases that keep their stage.
         ...(next.status === "COMPLETED" && stageAfterSilence(seq) ? { stage: "NOT_INTERESTED" as const } : {}),
+        // A follow-up template that carries the roster link shares the roster with this brand.
+        ...(seq.outreachType === "BRAND" && !seq.rosterSentAt && mentionsRosterLink(renderedBody) ? { rosterSentAt: new Date() } : {}),
       },
     }),
     prisma.activityLog.create({
@@ -1430,6 +1461,50 @@ async function claimInboxScan(minGapMs: number): Promise<boolean> {
 }
 
 /**
+ * "Needs your reply" should clear however the team answered. A reply in the same conversation is
+ * caught by the reply check; this covers the other common case — answering in a fresh email (a
+ * forwarded shortlist, a new subject line) instead of in the thread. If we've written to the
+ * contact in another conversation since their reply, the flag comes off. Conversations that belong
+ * to a different outreach sequence don't count: an automatic follow-up about another campaign isn't
+ * an answer to this one.
+ */
+async function clearAnsweredElsewhere() {
+  try {
+    const waiting = await prisma.outreachSequence.findMany({
+      where: { deletedAt: null, awaitingResponseSince: { not: null } },
+      select: { id: true, threadId: true, lastReplyAt: true, awaitingResponseSince: true, contact: { select: { email: true } } },
+    });
+    for (const seq of waiting) {
+      const answered = await prisma.inboxMessage.findFirst({
+        where: {
+          direction: "OUT",
+          sentAt: { gt: seq.lastReplyAt ?? seq.awaitingResponseSince! },
+          toAddresses: { contains: seq.contact.email, mode: "insensitive" },
+          thread: { gmailThreadId: { not: seq.threadId }, sequenceId: null },
+        },
+        orderBy: { sentAt: "desc" },
+        select: { subject: true },
+      });
+      if (!answered) continue;
+      const cleared = await prisma.outreachSequence.updateMany({
+        where: { id: seq.id, awaitingResponseSince: { not: null } },
+        data: { awaitingResponseSince: null },
+      });
+      if (cleared.count === 0) continue;
+      await prisma.activityLog.create({
+        data: {
+          sequenceId: seq.id,
+          eventType: "REPLY_HANDLED",
+          description: `You wrote to ${seq.contact.email} in another email ("${answered.subject.slice(0, 80)}") — marked as handled.`,
+        },
+      });
+    }
+  } catch (err) {
+    console.error("[inbox watch] couldn't check for replies answered elsewhere:", err);
+  }
+}
+
+/**
  * Pulls what changed in Gmail into the inbox mirror, then reads any reply that landed on a thread
  * the automation had already wrapped up — the late reply the regular reply check would never see.
  */
@@ -1442,6 +1517,7 @@ async function runInboxPass(): Promise<{ threadsSynced: number; replyResults: { 
       await prisma.outreachSequence.updateMany({ where: { id: { in: synced.sequenceIds } }, data: { lastReplyCheckAt: null } });
       replyResults.push(...(await runDormantReplyCheck(synced.sequenceIds)));
     }
+    await clearAnsweredElsewhere();
     return { threadsSynced: synced.threadsSynced, replyResults };
   } catch (err) {
     // A failure scanning for new mail must never take down whatever called it (a tick's sends have

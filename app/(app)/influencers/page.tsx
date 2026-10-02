@@ -18,6 +18,8 @@ import type { Prisma } from "@/app/generated/prisma/client";
 import { Avatar, EmptyState, Kpi, KpiGrid, PageHeader, Pager, SendDots, ViewPills } from "@/app/components/ui";
 import ListSearch from "@/app/components/ListSearch";
 import MarkHandledButton from "@/app/components/MarkHandledButton";
+import ReplyPanel from "@/app/components/ReplyPanel";
+import { scheduledRepliesBySequence } from "@/lib/scheduledReplies";
 import InfluencerTabs from "./InfluencerTabs";
 
 // Reply and follow-up state changes every worker tick — never serve a cached copy.
@@ -68,6 +70,7 @@ export default async function InfluencerOutreachPage({
         contact: { include: { creator: true } },
         scheduledActions: { where: { status: "PENDING" }, orderBy: { scheduledAt: "asc" }, take: 1 },
         messages: { where: { direction: "OUT" }, orderBy: { sentAt: "asc" }, select: { sentAt: true, source: true } },
+        inboxThreads: { take: 1, select: { id: true } },
       },
       // Replies waiting on the team float to the top of every view.
       orderBy: [{ awaitingResponseSince: { sort: "desc", nulls: "last" } }, { updatedAt: "desc" }],
@@ -76,6 +79,7 @@ export default async function InfluencerOutreachPage({
     }),
   ]);
 
+  const scheduledReplies = await scheduledRepliesBySequence();
   const countFor = (key: InfluencerView) => viewCounts[INFLUENCER_VIEWS.findIndex((v) => v.key === key)];
   const replyRate = total > 0 ? (replied / total) * 100 : 0;
   const medianUsd = median(usdRates.map((r) => r.quotedRateAmount!));
@@ -191,6 +195,8 @@ export default async function InfluencerOutreachPage({
                 const hasReplied = !!seq.lastReplyAt || seq.status === "REPLIED" || seq.status === "UNSUBSCRIBED";
                 const pending = seq.scheduledActions[0];
                 const name = creator?.name ?? seq.contact.name;
+                const inboxThreadId = seq.inboxThreads[0]?.id ?? null;
+                const replyScheduledFor = scheduledReplies.get(seq.id) ?? null;
 
                 return (
                   <tr key={seq.id} style={awaiting ? { background: "var(--influencers-accent-light)", boxShadow: "inset 3px 0 0 var(--influencers-accent)" } : undefined}>
@@ -240,9 +246,15 @@ export default async function InfluencerOutreachPage({
                           {(seq.replySummary || seq.lastReplyText) && (
                             <p className="text-xs text-[var(--muted)] mt-1 line-clamp-2 break-words">{seq.replySummary ?? seq.lastReplyText}</p>
                           )}
-                          {awaiting && (
-                            <div className="mt-2">
-                              <MarkHandledButton sequenceId={seq.id} compact />
+                          {replyScheduledFor && (
+                            <p className="text-xs mt-1.5 font-medium" style={{ color: "var(--info-fg)" }}>
+                              Your reply is scheduled for {formatDateTime(replyScheduledFor)}
+                            </p>
+                          )}
+                          {(inboxThreadId || awaiting) && (
+                            <div className="mt-2 flex items-center gap-2 flex-wrap">
+                              {inboxThreadId && <ReplyPanel threadId={inboxThreadId} name={name} workspace="influencers" stage={seq.stage} />}
+                              {awaiting && <MarkHandledButton sequenceId={seq.id} compact />}
                             </div>
                           )}
                         </>
