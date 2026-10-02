@@ -53,7 +53,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         data: { sequenceId: id, eventType: "RATE_DETECTED", description: "Cleared the recorded rate." },
       }),
     ]);
-    await syncCreatorRateFromSequence(id);
+    await syncCreatorRateFromSequence(id, { byHand: true });
     return NextResponse.json({ ok: true });
   }
 
@@ -113,7 +113,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         ]
       : []),
   ]);
-  await syncCreatorRateFromSequence(id);
+  await syncCreatorRateFromSequence(id, { byHand: true });
 
   return NextResponse.json({ ok: true });
 }

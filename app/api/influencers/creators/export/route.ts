@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { csvCell } from "@/lib/influencerOutreach";
-import { formatMoney } from "@/lib/creatorReplyAnalysis";
+import { formatMoney, parseStoredRates } from "@/lib/creatorReplyAnalysis";
 import { parseRosterFilters, rosterOrderBy, rosterWhere, searchTerms } from "@/lib/creatorRoster";
 import { findKitTitleMatches } from "@/lib/creatorSmartSearch";
 import { stageLabelText, statusLabel } from "@/app/components/Badge";
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
   const header = [
     "Creator", "Channel", "Subscribers", "Avg views", "Engagement %", "Country", "Niche", "Content highlights",
     "Email", "Email source", "Instagram", "TikTok", "Pinterest", "Amazon storefront", "Facebook", "X / Twitter",
-    "Websites", "Rate", "Rate for", "Rate date", "Outreach stage", "Outreach status", "Replied", "Last contacted",
+    "Websites", "Real rate", "Real rate for", "Real rate card", "Rate terms", "Rate date", "Brand pitch rate", "Brand pitch for", "Outreach stage", "Outreach status", "Replied", "Last contacted",
     "Media kit link", "Notes",
   ];
 
@@ -54,7 +54,11 @@ export async function GET(req: NextRequest) {
       c.websiteLinks.join(" "),
       c.quotedRateAmount !== null ? formatMoney(c.quotedRateAmount, c.quotedRateCurrency) : "",
       c.quotedRateDeliverable,
+      parseStoredRates(c.rateCard).map((r) => `${r.deliverable ?? "Rate"}: ${formatMoney(r.amount, r.currency)}`).join("; "),
+      c.rateNote,
       c.quotedRateAt?.toISOString().slice(0, 10),
+      c.pitchRateAmount !== null ? formatMoney(c.pitchRateAmount, c.pitchRateCurrency) : "",
+      c.pitchRateDeliverable,
       sequence ? stageLabelText(sequence.stage) : "Not contacted",
       sequence ? statusLabel(sequence.status) : "",
       sequence ? (replied ? "Yes" : "No") : "",

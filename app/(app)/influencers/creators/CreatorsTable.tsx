@@ -10,6 +10,7 @@ import { formatMoney } from "@/lib/creatorReplyAnalysis";
 import { ROSTER_PLATFORMS } from "@/lib/creatorRoster";
 import BulkPitchDialog, { type PitchCreator } from "./BulkPitchDialog";
 import PitchSheetDialog from "./PitchSheetDialog";
+import CreatorRateDialog from "./CreatorRateDialog";
 
 export interface RosterRow {
   id: string;
@@ -28,7 +29,13 @@ export interface RosterRow {
   emailCheckedAt: string | null;
   platformLinks: Record<string, string>;
   websiteLinks: string[];
+  /** Their real rate — the headline price of the rate card. Never shown to a brand. */
   rate: { amount: number; currency: string | null; deliverable: string | null; at: string | null } | null;
+  /** Every price on their real rate card (the headline alone when that's all there is). */
+  rateCard: { amount: number; currency: string | null; deliverable: string | null }[];
+  rateNote: string | null;
+  /** What we quote a brand for them. */
+  pitchRate: { amount: number; currency: string | null; deliverable: string | null } | null;
   outreach: { sequenceId: string; stage: string; status: string; replied: boolean; awaiting: boolean; contactedAt: string } | null;
   mediaKitToken: string | null;
   mediaKitGeneratedAt: string | null;
@@ -66,6 +73,7 @@ export default function CreatorsTable({ rows, totalMatching }: { rows: RosterRow
   const [pitching, setPitching] = useState<PitchCreator[] | null>(null);
   const [sheetRows, setSheetRows] = useState<RosterRow[] | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [rateRow, setRateRow] = useState<RosterRow | null>(null);
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const selectedRows = rows.filter((r) => selected.has(r.id));
@@ -221,7 +229,7 @@ export default function CreatorsTable({ rows, totalMatching }: { rows: RosterRow
                   onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)))}
                 />
               </th>
-              {["Creator", "Audience", "Email", "Platforms", "Rate", "Outreach", "Media kit", ""].map((label) => (
+              {["Creator", "Audience", "Email", "Platforms", "Rates", "Outreach", "Media kit", ""].map((label) => (
                 <th key={label} className="px-3 py-3 font-medium text-xs uppercase tracking-wide">
                   {label}
                 </th>
@@ -337,17 +345,33 @@ export default function CreatorsTable({ rows, totalMatching }: { rows: RosterRow
                     )}
                   </td>
 
-                  <td className="px-3 py-3 text-xs whitespace-nowrap">
-                    {row.rate ? (
-                      <>
-                        <div className="font-semibold text-[var(--ink)]">{formatMoney(row.rate.amount, row.rate.currency)}{row.rate.currency ? "" : " (no currency)"}</div>
-                        <div className="text-[var(--muted-2)]">
-                          {[row.rate.deliverable, shortDate(row.rate.at)].filter(Boolean).join(" · ")}
+                  <td className="px-3 py-3 text-xs">
+                    <button onClick={() => setRateRow(row)} className="text-left rounded-md -m-1 p-1 hover:bg-[var(--surface-2)] max-w-[190px]" title="Edit the real rate and the brand pitch rate">
+                      {row.rate ? (
+                        <>
+                          <div className="font-semibold text-[var(--ink)] whitespace-nowrap">
+                            {formatMoney(row.rate.amount, row.rate.currency)}
+                            {row.rate.currency ? "" : " (no currency)"}
+                            <span className="font-normal text-[var(--muted-2)]"> real</span>
+                          </div>
+                          <div className="text-[var(--muted-2)] truncate" title={row.rateCard.map((r) => `${r.deliverable ?? "Rate"}: ${formatMoney(r.amount, r.currency)}`).join("\n") + (row.rateNote ? `\n${row.rateNote}` : "")}>
+                            {row.rate.deliverable ?? "Rate"}
+                            {row.rateCard.length > 1 ? ` · +${row.rateCard.length - 1} more` : ""}
+                          </div>
+                        </>
+                      ) : row.rateNote ? (
+                        <div className="text-[var(--muted)] line-clamp-2" title={row.rateNote}>
+                          {row.rateNote}
                         </div>
-                      </>
-                    ) : (
-                      <span className="text-[var(--muted-2)]">—</span>
-                    )}
+                      ) : (
+                        <span className="text-[var(--muted-2)]">Add rate</span>
+                      )}
+                      {row.pitchRate && (
+                        <div className="mt-1 whitespace-nowrap" style={{ color: "var(--brand-teal-dark)" }}>
+                          {formatMoney(row.pitchRate.amount, row.pitchRate.currency)} <span className="text-[var(--muted-2)]">brand pitch</span>
+                        </div>
+                      )}
+                    </button>
                   </td>
 
                   <td className="px-3 py-3 text-xs whitespace-nowrap">
@@ -411,6 +435,7 @@ export default function CreatorsTable({ rows, totalMatching }: { rows: RosterRow
       </div>
 
       {detailId && <CreatorDetailModal creatorId={detailId} onClose={() => setDetailId(null)} onSaved={() => router.refresh()} />}
+      {rateRow && <CreatorRateDialog row={rateRow} onClose={() => setRateRow(null)} onSaved={() => router.refresh()} />}
       {sheetRows && <PitchSheetDialog rows={sheetRows} onClose={() => setSheetRows(null)} />}
       {pitching && (
         <BulkPitchDialog
