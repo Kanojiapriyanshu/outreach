@@ -1,13 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronLeft, ExternalLink, MessageSquareReply } from "lucide-react";
+import { ChevronLeft, ExternalLink, MessageSquareReply, Reply } from "lucide-react";
+import { loadThreadWithBodies } from "@/lib/inboxSync";
+import { isTrackingNotification } from "@/lib/trackingSenders";
+import { withoutQuote } from "@/lib/replyNoise";
 import { prisma } from "@/lib/prisma";
 import { budgetLabel, companyOrCreatorName, gmailThreadLink, influencerRangeLabel } from "@/lib/display";
 import { formatAgo, formatDateTime } from "@/lib/formatDate";
 import { brandReplyLabel } from "@/lib/brandOutreach";
 import Badge, { StageBadge } from "@/app/components/Badge";
 import MarkHandledButton from "@/app/components/MarkHandledButton";
-import ReplyPanel from "@/app/components/ReplyPanel";
+import ReplyPanel, { type ThreadMessage } from "@/app/components/ReplyPanel";
 import RosterSentToggle from "@/app/components/RosterSentToggle";
 import { headers } from "next/headers";
 import { appBaseUrl } from "@/lib/pitchSheetServer";
@@ -34,15 +37,28 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
       scheduledActions: { orderBy: { step: "asc" } },
       messages: { orderBy: { sentAt: "asc" } },
       activityLogs: { orderBy: { timestamp: "asc" } },
-      // A brand reply recorded before reply text was stored still shows — read from the inbox mirror.
-      inboxThreads: {
-        take: 1,
-        select: { id: true, messages: { where: { direction: "IN" }, orderBy: { sentAt: "desc" }, take: 1, select: { snippet: true, bodyText: true } } },
-      },
+      inboxThreads: { take: 1, select: { id: true } },
     },
   });
 
   if (!sequence) notFound();
+
+  // The whole conversation with full bodies (fetched from Gmail and cached the first time) — the
+  // stored reply text can be just Gmail's short preview, which cuts the message off mid-sentence.
+  const inboxThreadId = sequence.inboxThreads[0]?.id;
+  const conversation = inboxThreadId ? await loadThreadWithBodies(inboxThreadId) : null;
+  const threadMessages: ThreadMessage[] = (conversation?.messages ?? []).map((m) => ({
+    id: m.id,
+    fromName: m.fromName,
+    fromAddress: m.fromAddress,
+    toAddresses: m.toAddresses,
+    snippet: m.snippet,
+    bodyText: m.bodyText,
+    direction: m.direction as "IN" | "OUT",
+    sentAt: m.sentAt.toISOString(),
+  }));
+  const latestInbound = [...threadMessages].reverse().find((m) => m.direction === "IN" && !isTrackingNotification(m.fromAddress));
+  const fullReplyText = latestInbound?.bodyText?.trim() ? withoutQuote(latestInbound.bodyText) : null;
 
   const pending = sequence.scheduledActions.find((a) => a.status === "PENDING");
   // A cancelled follow-up doesn't get replaced by anything automatically (unlike "Skip", which
@@ -72,8 +88,9 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
   const accentLight = isCreator ? "var(--influencers-accent-light)" : "var(--brands-accent-light)";
   const h = await headers();
   const rosterUrl = `${appBaseUrl(`${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`)}/roster`;
-  const mirroredReply = sequence.inboxThreads[0]?.messages[0];
-  const brandReplyText = sequence.lastReplyText ?? mirroredReply?.bodyText?.trim() ?? mirroredReply?.snippet ?? null;
+  const brandReplyText = fullReplyText ?? sequence.lastReplyText ?? latestInbound?.snippet ?? null;
+  const displayName = companyOrCreatorName(sequence.contact) === "—" ? sequence.contact.name : companyOrCreatorName(sequence.contact);
+  const canReply = !!inboxThreadId && !sequence.deletedAt;
 
   return (
     <div className="space-y-6">
@@ -101,15 +118,10 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
             <a href={gmailThreadLink(sequence.threadId)} target="_blank" rel="noopener noreferrer" className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs">
               Open in Gmail <ExternalLink size={12} />
             </a>
-            {sequence.inboxThreads[0] && !sequence.deletedAt && (
-              <ReplyPanel
-                threadId={sequence.inboxThreads[0].id}
-                name={companyOrCreatorName(sequence.contact) === "—" ? sequence.contact.name : companyOrCreatorName(sequence.contact)}
-                workspace={isCreator ? "influencers" : "brands"}
-                stage={sequence.stage}
-                variant="primary"
-                rosterUrl={rosterUrl}
-              />
+            {canReply && (
+              <a href="#reply" className="btn-primary inline-flex items-center gap-1.5 px-3.5 py-2 text-sm">
+                <Reply size={15} /> Reply
+              </a>
             )}
           </div>
         </div>
@@ -137,7 +149,7 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
             {sequence.awaitingResponseSince && <MarkHandledButton sequenceId={sequence.id} compact />}
           </div>
           {brandReplyText && (
-            <blockquote className="mt-3 text-sm text-[var(--ink)] whitespace-pre-wrap break-words rounded-lg px-4 py-3 max-h-64 overflow-y-auto" style={{ background: "var(--surface-2)", borderLeft: "3px solid var(--brands-accent)" }}>
+            <blockquote className="mt-3 text-sm text-[var(--ink)] whitespace-pre-wrap break-words rounded-lg px-4 py-3 max-h-[32rem] overflow-y-auto scroll-slim" style={{ background: "var(--surface-2)", borderLeft: "3px solid var(--brands-accent)" }}>
               {brandReplyText}
             </blockquote>
           )}
@@ -151,12 +163,24 @@ export default async function SequenceDetailPage({ params }: { params: Promise<{
           lastReplyAt={sequence.lastReplyAt?.toISOString() ?? null}
           replyIntent={sequence.replyIntent}
           replySummary={sequence.replySummary}
-          lastReplyText={sequence.lastReplyText}
+          lastReplyText={fullReplyText ?? sequence.lastReplyText}
           repliedAfterStep={sequence.repliedAfterStep}
           awaitingSince={sequence.awaitingResponseSince?.toISOString() ?? null}
           rates={parseStoredRates(sequence.quotedRates)}
           rateNote={sequence.rateNote}
           followUpScheduled={!!pending}
+        />
+      )}
+
+      {canReply && (
+        <ReplyPanel
+          threadId={inboxThreadId}
+          name={displayName}
+          workspace={isCreator ? "influencers" : "brands"}
+          stage={sequence.stage}
+          variant="inline"
+          rosterUrl={rosterUrl}
+          initialMessages={threadMessages}
         />
       )}
 
