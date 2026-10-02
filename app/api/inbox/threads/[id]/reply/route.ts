@@ -1,22 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { gmailClientFor, sendRichEmail, getRfc822MessageId, modifyThreadLabels, type OutgoingAttachment } from "@/lib/gmail";
-import { refreshThread } from "@/lib/inboxSync";
-import { isTrackingNotification } from "@/lib/trackingSenders";
-import { computeNextScheduledAt } from "@/lib/scheduler";
+import type { OutgoingAttachment } from "@/lib/gmail";
+import { htmlToText, replyTarget, sendThreadReply, type FollowUpChoice, type ReplyStageChoice } from "@/lib/threadReply";
+import { schedulePlainEmail } from "@/lib/trackSequence";
 import { formatDateTime } from "@/lib/formatDate";
 
 export const maxDuration = 60;
 
 /** Mirrors the cap in /api/inbox/send — see the note there on serverless body limits. */
 const MAX_ATTACHMENT_BYTES = 3 * 1024 * 1024;
-
-/** What should happen to automation after a human replies by hand. */
-type FollowUpChoice =
-  /** Treat the reply like a fresh outbound: if they go quiet, nudge on the usual cadence. */
-  | "auto"
-  /** The conversation is being handled personally from here — no automated chasing. */
-  | "none";
 
 interface ReplyBody {
   /** HTML body from the rich-text composer. */
@@ -25,6 +17,9 @@ interface ReplyBody {
   bcc?: string;
   attachments?: OutgoingAttachment[];
   followUp?: FollowUpChoice;
+  stage?: ReplyStageChoice;
+  /** Send later instead of now — Gmail-style schedule send, into the same conversation. */
+  scheduledAt?: string;
 }
 
 function isValidEmailList(value: string): boolean {
@@ -35,38 +30,16 @@ function isValidEmailList(value: string): boolean {
     .every((address) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address));
 }
 
-/** Flattens the composed HTML for the activity record, which stores plain text. */
-function htmlToText(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|tr)>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
 /**
- * Sends a reply into an existing conversation and then decides what automation should do next.
- *
- * That second half is the point. A reply typed by hand is a real pipeline event, not just an
- * email: the follow-ups queued against the *previous* message are now stale (they'd chase someone
- * about something already superseded), and whether this conversation still needs automated
- * chasing is a judgment only the person writing it can make. So replying always clears the stale
- * queue, and the caller says which of the two sane outcomes they want — resume chasing on the
- * normal cadence if the other side goes quiet, or hand the thread over to a human entirely.
+ * Replies into an existing conversation — now, or at a chosen time. Used by the inbox and by the
+ * reply panel on the Brand / Influencer outreach pages; what happens to the thread's pipeline state
+ * afterwards lives in lib/threadReply.ts so every entry point behaves the same.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { html, cc, bcc, attachments = [], followUp = "auto" }: ReplyBody = await req.json();
+  const { html, cc, bcc, attachments = [], followUp = "auto", stage = "auto", scheduledAt: scheduledAtRaw }: ReplyBody = await req.json();
 
-  const bodyText = htmlToText(html ?? "");
-  if (!bodyText && attachments.length === 0) {
+  if (!htmlToText(html ?? "") && attachments.length === 0) {
     return NextResponse.json({ error: "Write something before sending" }, { status: 400 });
   }
   if (cc?.trim() && !isValidEmailList(cc)) {
@@ -84,127 +57,43 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     );
   }
 
-  const thread = await prisma.inboxThread.findUnique({
-    where: { id },
-    include: { messages: { orderBy: { sentAt: "asc" } }, emailAccount: true },
-  });
-  if (!thread) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (thread.messages.length === 0) {
-    return NextResponse.json({ error: "Nothing to reply to in this conversation yet" }, { status: 400 });
-  }
+  const scheduledAt = scheduledAtRaw ? new Date(scheduledAtRaw) : null;
+  if (scheduledAt && !Number.isNaN(scheduledAt.getTime()) && scheduledAt.getTime() > Date.now() + 60_000) {
+    const found = await replyTarget(id);
+    if (!found.ok) return NextResponse.json({ error: found.error }, { status: found.status });
 
-  // Reply to whoever last wrote in — falling back to the thread's counterpart if every message
-  // here is one of ours (a thread we started and they haven't answered).
-  //
-  // Tracking notifications are excluded explicitly rather than relying on the sync filter alone.
-  // Getting this wrong doesn't degrade gracefully: a read-receipt robot's mail threads into the
-  // real conversation, and picking it as "the last inbound" would address the reply to the robot
-  // instead of the person. Belt and braces on a mistake that sends mail to the wrong recipient.
-  const lastInbound = [...thread.messages]
-    .reverse()
-    .find((m) => m.direction === "IN" && !isTrackingNotification(m.fromAddress));
-  // The message whose headers the reply threads onto — also never a tracking notification, so the
-  // conversation stays anchored to real correspondence.
-  const realMessages = thread.messages.filter((m) => !isTrackingNotification(m.fromAddress));
-  const target = lastInbound ?? realMessages[realMessages.length - 1] ?? thread.messages[thread.messages.length - 1];
-  const to = lastInbound ? lastInbound.fromAddress : thread.fromAddress;
-  const subject = thread.subject.toLowerCase().startsWith("re:") ? thread.subject : `Re: ${thread.subject}`;
+    const result = await schedulePlainEmail(
+      {
+        emailAccountId: found.thread.emailAccountId,
+        to: found.to,
+        cc: cc?.trim() || undefined,
+        bcc: bcc?.trim() || undefined,
+        subject: found.subject,
+        html: html ?? "",
+        attachments,
+        reply: { inboxThreadId: id, sequenceId: found.thread.sequenceId, followUp, stage },
+      },
+      scheduledAt
+    );
+    if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
 
-  let sent: { id: string; threadId: string };
-  try {
-    const gmail = await gmailClientFor(thread.emailAccountId);
-    const { messageId: rfc822MessageId, references } = await getRfc822MessageId(gmail, target.gmailMessageId);
-
-    sent = await sendRichEmail(gmail, {
-      threadId: thread.gmailThreadId,
-      to,
-      cc: cc?.trim() || undefined,
-      bcc: bcc?.trim() || undefined,
-      subject,
-      html: html ?? "",
-      attachments,
-      inReplyToMessageId: rfc822MessageId,
-      references,
-    });
-
-    // Replying obviously means it's been read.
-    await modifyThreadLabels(gmail, thread.gmailThreadId, { remove: ["UNREAD"] }).catch(() => {});
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `Couldn't send: ${message}` }, { status: 502 });
-  }
-
-  await prisma.inboxThread.update({ where: { id }, data: { isUnread: false } });
-  await refreshThread(id).catch(() => {});
-
-  // --- Automation handoff, for conversations the CRM is actually running a sequence on ---
-  let followUpResult: { action: FollowUpChoice; scheduledAt?: Date } = { action: followUp };
-
-  if (thread.sequenceId) {
-    const seq = await prisma.outreachSequence.findUnique({ where: { id: thread.sequenceId } });
-    if (seq && !seq.deletedAt) {
-      // Whatever was queued was aimed at the state of the thread *before* this reply — always
-      // stale now, regardless of which choice was made.
-      await prisma.scheduledAction.updateMany({
-        where: { sequenceId: seq.id, status: "PENDING" },
-        data: { status: "CANCELLED" },
-      });
-
-      await prisma.emailMessage.create({
-        data: {
-          sequenceId: seq.id,
-          providerMessageId: sent.id,
-          direction: "OUT",
-          source: "MANUAL",
-          subject,
-          body: bodyText,
-          sentAt: new Date(),
-          status: "SENT",
-        },
-      });
-
-      if (followUp === "auto") {
-        const settings = await prisma.automationSettings.findFirstOrThrow();
-        const scheduledAt = computeNextScheduledAt(seq.outreachType, 1, settings);
-        await prisma.outreachSequence.update({
-          where: { id: seq.id },
-          data: { status: "WAITING_FOR_REPLY", currentStep: 0, creatorListResponseAt: null, awaitingResponseSince: null },
-        });
-        await prisma.scheduledAction.create({
+    // The answer is written and queued, so the thread no longer needs the team's attention.
+    if (found.thread.sequenceId) {
+      await prisma.$transaction([
+        prisma.outreachSequence.update({ where: { id: found.thread.sequenceId }, data: { awaitingResponseSince: null } }),
+        prisma.activityLog.create({
           data: {
-            sequenceId: seq.id,
-            step: 1,
-            scheduledAt,
-            status: "PENDING",
-            // An influencer gets a check-in about the collaboration — the creator-list nudge is
-            // brand copy and would read as a mistake to them.
-            kind: seq.outreachType === "CREATOR" ? "CREATOR_NUDGE" : "CREATOR_LIST_NUDGE",
-            actionKey: `${seq.id}-reply-${sent.id}`,
+            sequenceId: found.thread.sequenceId,
+            eventType: "REPLY_HANDLED",
+            description: `Reply written and scheduled to send ${formatDateTime(result.scheduledAt)}.`,
           },
-        });
-        await prisma.activityLog.create({
-          data: {
-            sequenceId: seq.id,
-            eventType: "FOLLOW_UP_SCHEDULED",
-            description: `Replied by hand from the inbox. If there's no answer, the next nudge goes out ${formatDateTime(scheduledAt)}.`,
-          },
-        });
-        followUpResult = { action: "auto", scheduledAt };
-      } else {
-        await prisma.outreachSequence.update({
-          where: { id: seq.id },
-          data: { status: "STOPPED", awaitingResponseSince: null },
-        });
-        await prisma.activityLog.create({
-          data: {
-            sequenceId: seq.id,
-            eventType: "SEQUENCE_STOPPED",
-            description: "Replied by hand from the inbox and turned off automated follow-ups — this one's being handled personally.",
-          },
-        });
-      }
+        }),
+      ]);
     }
+    return NextResponse.json({ ok: true, scheduled: true, scheduledAt: result.scheduledAt });
   }
 
-  return NextResponse.json({ ok: true, followUp: followUpResult });
+  const result = await sendThreadReply(id, { html, cc, bcc, attachments, followUp, stage });
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+  return NextResponse.json({ ok: true, followUp: result.followUp, stageMovedTo: result.stageMovedTo });
 }

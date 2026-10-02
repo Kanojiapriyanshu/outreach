@@ -27,6 +27,13 @@ describe("classifyReplyHeuristic", () => {
     );
   });
 
+  it("catches a brand asking whether we have creators, a paragraph into the email", () => {
+    const reply =
+      "Thank you for reaching out and for the introduction to Fidem Growth. Regarding the Baseus Car Dash Cam campaign, this project is currently nearing its conclusion. We are now shifting our focus to the brand's security camera products. Do you have a list of creators who cover home security?";
+    expect(classifyReplyHeuristic(reply, preList)).toBe("WANTS_CREATOR_LIST");
+    expect(classifyReplyHeuristic("Could you share your roster for tech?", preList)).toBe("WANTS_CREATOR_LIST");
+  });
+
   it("does not offer WANTS_CREATOR_LIST once the list has already been sent", () => {
     expect(classifyReplyHeuristic("Sounds exciting! Kindly send me the creator list.", postList)).not.toBe(
       "WANTS_CREATOR_LIST"

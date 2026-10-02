@@ -1,5 +1,40 @@
 import { describe, it, expect } from "vitest";
-import { advanceState, isActiveForSending, stageAfterSilence, FINAL_STATUSES, MAX_FOLLOW_UPS, type SequenceState } from "../stateMachine";
+import { advanceState, isActiveForSending, stageAfterReply, stageAfterSilence, FINAL_STATUSES, MAX_FOLLOW_UPS, type SequenceState } from "../stateMachine";
+import { isGmailReaction, mightBeGmailReaction } from "../replyNoise";
+
+describe("stageAfterReply", () => {
+  it("moves a brand that asked for creators to Creator List Sent once the team replies", () => {
+    expect(stageAfterReply("BRAND", "CREATOR_LIST_REQUESTED", "auto")).toBe("CREATOR_LIST_SENT");
+  });
+
+  it("leaves other stages alone unless told the list went out", () => {
+    expect(stageAfterReply("BRAND", "FIRST_EMAIL_SENT", "auto")).toBeNull();
+    expect(stageAfterReply("BRAND", "FIRST_EMAIL_SENT", "list-sent")).toBe("CREATOR_LIST_SENT");
+    expect(stageAfterReply("BRAND", "CREATOR_LIST_REQUESTED", "keep")).toBeNull();
+  });
+
+  it("never moves a hand-set or finished stage, or an influencer thread", () => {
+    for (const stage of ["NEGOTIATION", "CREATOR_SELECTED", "DEAL", "NOT_INTERESTED", "CREATOR_LIST_SENT"]) {
+      expect(stageAfterReply("BRAND", stage, "list-sent")).toBeNull();
+    }
+    expect(stageAfterReply("CREATOR", "INTERESTED", "list-sent")).toBeNull();
+  });
+});
+
+describe("Gmail emoji reactions", () => {
+  it("recognises a reaction notice in English and Chinese, and by its campaign tag", () => {
+    expect(isGmailReaction("🤝 Team Daniel reacted via Gmail")).toBe(true);
+    expect(isGmailReaction("👌 Lee Xueli已通过 Gmail <https://www.google.com/gmail/about/?utm_source=gmail-in-product&utm_campaign=emojireactionemail#app>")).toBe(true);
+    expect(isGmailReaction("https://www.google.com/gmail/about/?utm_medium=et&utm_campaign=emojireactionemail")).toBe(true);
+  });
+
+  it("doesn't mistake a real reply for one", () => {
+    expect(isGmailReaction("Sounds good, please send the creator list to my Gmail.")).toBe(false);
+    expect(isGmailReaction(null)).toBe(false);
+    expect(mightBeGmailReaction("Thanks! I'll reply from my gmail later")).toBe(true);
+    expect(mightBeGmailReaction("Hi Yash, our budget is $2,000 per video.")).toBe(false);
+  });
+});
 
 describe("advanceState", () => {
   it("moves WAITING_FOR_REPLY -> FOLLOW_UP_1_SENT on NO_REPLY_ADVANCE", () => {

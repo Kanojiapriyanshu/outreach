@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { Building2, Download, ExternalLink, MessageSquareReply, Plus } from "lucide-react";
+import { headers } from "next/headers";
+import { Building2, Download, ExternalLink, Link2, MessageSquareReply, Plus, Sparkles } from "lucide-react";
+import { appBaseUrl } from "@/lib/pitchSheetServer";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime } from "@/lib/formatDate";
 import { budgetLabel, gmailThreadLink, influencerRangeLabel } from "@/lib/display";
@@ -9,6 +11,8 @@ import { Avatar, EmptyState, Kpi, KpiGrid, PageHeader, Pager, SendDots, ViewPill
 import ListSearch from "@/app/components/ListSearch";
 import MarkHandledButton from "@/app/components/MarkHandledButton";
 import StarToggle from "@/app/components/StarToggle";
+import ReplyPanel from "@/app/components/ReplyPanel";
+import { scheduledRepliesBySequence } from "@/lib/scheduledReplies";
 import {
   BRAND_BASE,
   BRAND_REPLIED_WHERE,
@@ -56,7 +60,7 @@ export default async function BrandOutreachPage({ searchParams }: { searchParams
         // Brand replies from before reply text was recorded still show — read from the inbox mirror.
         inboxThreads: {
           take: 1,
-          select: { messages: { where: { direction: "IN" }, orderBy: { sentAt: "desc" }, take: 1, select: { snippet: true, sentAt: true } } },
+          select: { id: true, messages: { where: { direction: "IN" }, orderBy: { sentAt: "desc" }, take: 1, select: { snippet: true, sentAt: true } } },
         },
       },
       // Replies waiting on the team float to the top of every view.
@@ -66,6 +70,25 @@ export default async function BrandOutreachPage({ searchParams }: { searchParams
     }),
   ]);
 
+  const scheduledReplies = await scheduledRepliesBySequence();
+  // Pitch sheets made for the brands on this page, matched by the brand's email or name, so a row
+  // can show that a tailored shortlist went out and whether the brand has opened it.
+  const sheets = await prisma.pitchSheet.findMany({
+    where: {
+      OR: [
+        { brandEmail: { in: sequences.map((s) => s.contact.email), mode: "insensitive" } },
+        { brandName: { in: sequences.flatMap((s) => (s.contact.brand?.name ? [s.contact.brand.name.trim()] : [])), mode: "insensitive" } },
+      ],
+    },
+    orderBy: { createdAt: "desc" },
+    select: { brandName: true, brandEmail: true, viewCount: true, lastViewedAt: true, createdAt: true },
+  });
+  const sheetFor = (email: string, brandName: string | null | undefined) =>
+    sheets.find((p) => p.brandEmail?.toLowerCase() === email.toLowerCase()) ??
+    (brandName ? sheets.find((p) => p.brandName.trim().toLowerCase() === brandName.trim().toLowerCase()) : undefined) ??
+    null;
+  const h = await headers();
+  const rosterUrl = `${appBaseUrl(`${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`)}/roster`;
   const countFor = (key: BrandView) => viewCounts[BRAND_VIEWS.findIndex((v) => v.key === key)];
   const [total, replied] = funnel;
   const replyRate = total > 0 ? (replied / total) * 100 : 0;
@@ -95,7 +118,7 @@ export default async function BrandOutreachPage({ searchParams }: { searchParams
 
       <BrandTabs active="outreach" counts={{ outreach: countFor("needs-response") }} />
 
-      <KpiGrid columns={5}>
+      <KpiGrid columns={6}>
         <Kpi label="Brands contacted" value={total} href="/brands" />
         <Kpi label="Replied" value={replied} hint={`${replyRate.toFixed(0)}% reply rate`} />
         <Kpi
@@ -105,7 +128,8 @@ export default async function BrandOutreachPage({ searchParams }: { searchParams
           tone={countFor("needs-response") > 0 ? "accent" : "default"}
           hint={countFor("needs-response") > 0 ? "Oldest first in the list below" : "You're all caught up"}
         />
-        <Kpi label="Wants creators" value={countFor("wants-list")} href={viewHref("wants-list")} hint={`${countFor("list-sent")} lists already sent`} />
+        <Kpi label="Wants creators" value={countFor("wants-list")} href={viewHref("wants-list")} hint={countFor("wants-list") > 0 ? "Asked — nothing sent yet" : "Everyone who asked got creators"} />
+        <Kpi label="Creators sent" value={countFor("list-sent")} href={viewHref("list-sent")} hint={`${countFor("roster-sent")} got the roster link`} />
         <Kpi label="Deals" value={countFor("deals")} href={viewHref("deals")} tone={countFor("deals") > 0 ? "success" : "default"} hint={`${countFor("in-talks")} in talks`} />
       </KpiGrid>
 
@@ -191,6 +215,9 @@ export default async function BrandOutreachPage({ searchParams }: { searchParams
                 const hasReplied = !!replyAt || seq.status === "REPLIED" || seq.status === "UNSUBSCRIBED";
                 const pending = seq.scheduledActions[0];
                 const name = brand?.name ?? seq.contact.name;
+                const inboxThreadId = seq.inboxThreads[0]?.id ?? null;
+                const replyScheduledFor = scheduledReplies.get(seq.id) ?? null;
+                const sheet = sheetFor(seq.contact.email, brand?.name);
 
                 return (
                   <tr key={seq.id} style={awaiting ? { background: "var(--brands-accent-light)", boxShadow: "inset 3px 0 0 var(--brands-accent)" } : undefined}>
@@ -250,9 +277,15 @@ export default async function BrandOutreachPage({ searchParams }: { searchParams
                             {replyAt && <span className="text-xs text-[var(--muted-2)]">{formatDateTime(replyAt)}</span>}
                           </div>
                           {replyText && <p className="text-xs text-[var(--muted)] mt-1 line-clamp-2 break-words">{replyText}</p>}
-                          {awaiting && (
-                            <div className="mt-2">
-                              <MarkHandledButton sequenceId={seq.id} compact />
+                          {replyScheduledFor && (
+                            <p className="text-xs mt-1.5 font-medium" style={{ color: "var(--info-fg)" }}>
+                              Your reply is scheduled for {formatDateTime(replyScheduledFor)}
+                            </p>
+                          )}
+                          {(inboxThreadId || awaiting) && (
+                            <div className="mt-2 flex items-center gap-2 flex-wrap">
+                              {inboxThreadId && <ReplyPanel threadId={inboxThreadId} name={name} workspace="brands" stage={seq.stage} rosterUrl={rosterUrl} />}
+                              {awaiting && <MarkHandledButton sequenceId={seq.id} compact />}
                             </div>
                           )}
                         </>
@@ -269,6 +302,25 @@ export default async function BrandOutreachPage({ searchParams }: { searchParams
 
                     <td>
                       <StageBadge stage={seq.stage} />
+                      {seq.rosterSentAt && (
+                        <div className="mt-1.5">
+                          <span className="badge" style={{ background: "var(--brand-lime-light)", color: "var(--ink)" }} title={`Roster shared ${formatDateTime(seq.rosterSentAt)}`}>
+                            <Sparkles size={11} /> Roster sent · {seq.rosterSentAt.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Kolkata" })}
+                          </span>
+                        </div>
+                      )}
+                      {sheet && (
+                        <div className="mt-1.5">
+                          <Link
+                            href="/brands/pitch-sheets"
+                            className="badge"
+                            style={sheet.viewCount > 0 ? { background: "var(--success-bg)", color: "var(--success-fg)" } : { background: "var(--neutral-bg)", color: "var(--neutral-fg)" }}
+                            title={sheet.lastViewedAt ? `Pitch sheet last opened ${formatDateTime(sheet.lastViewedAt)}` : "Pitch sheet made — the brand hasn't opened it yet"}
+                          >
+                            <Link2 size={11} /> Pitch sheet · {sheet.viewCount > 0 ? `opened ${sheet.viewCount}×` : "not opened"}
+                          </Link>
+                        </div>
+                      )}
                     </td>
 
                     <td className="text-xs text-[var(--muted)]">
