@@ -1,16 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { CircleCheck, Clock, Loader2, Reply, Sparkles, X } from "lucide-react";
 import { mentionsRosterLink, sharesCreators } from "@/lib/sharedLinks";
 import { formatDateTime } from "@/lib/formatDate";
 import { isTrackingNotification } from "@/lib/trackingSenders";
+import { withoutQuote } from "@/lib/replyNoise";
 import RichTextEditor from "@/app/(app)/inbox/RichTextEditor";
 import SchedulePicker from "@/app/(app)/inbox/SchedulePicker";
 import { AttachmentList, MAX_TOTAL_BYTES, TemplatePicker, templateToHtml, useAttachments } from "@/app/(app)/inbox/composerParts";
 
-interface ThreadMessage {
+export interface ThreadMessage {
   id: string;
   fromName: string;
   fromAddress: string;
@@ -24,19 +25,13 @@ interface ThreadMessage {
 // Stages a reply never changes — set by hand, finished, or already "list sent".
 const FIXED_STAGES = ["NEGOTIATION", "CREATOR_SELECTED", "DEAL", "NOT_INTERESTED", "CREATOR_LIST_SENT"];
 
-/** The part of a message written now, without the quoted chain underneath. */
-function withoutQuote(body: string): string {
-  const cut = [/^On .{0,120}wrote:\s*$/im, /^-{2,}\s*Original Message\s*-{2,}$/im, /^\s*>/m]
-    .map((p) => body.match(p)?.index ?? body.length)
-    .reduce((a, b) => Math.min(a, b), body.length);
-  return body.slice(0, cut).trim() || body.trim();
-}
-
 /**
  * Reply to a brand or creator without leaving the outreach list: read what they wrote, answer in
  * the same email thread, and either send now or schedule it. Sending goes through the same route
  * the inbox uses, so the thread's "needs your reply" flag, follow-ups and stage update the same way
  * wherever the reply is written.
+ *
+ * "inline" puts the same composer straight on the page (the thread page) instead of behind a button.
  */
 export default function ReplyPanel({
   threadId,
@@ -45,19 +40,23 @@ export default function ReplyPanel({
   stage,
   variant = "button",
   rosterUrl,
+  initialMessages,
 }: {
   /** The inbox conversation to reply in. */
   threadId: string;
   name: string;
   workspace: "brands" | "influencers";
   stage: string;
-  variant?: "button" | "primary";
+  variant?: "button" | "primary" | "inline";
   /** The public roster link, offered as a one-click insert when replying to a brand. */
   rosterUrl?: string;
+  /** The conversation, when the page already has it — saves loading it again. */
+  initialMessages?: ThreadMessage[];
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<ThreadMessage[] | null>(null);
+  const inline = variant === "inline";
+  const [open, setOpen] = useState(inline);
+  const [messages, setMessages] = useState<ThreadMessage[] | null>(initialMessages ?? null);
   const [showAll, setShowAll] = useState(false);
   const [html, setHtml] = useState("");
   const [cc, setCc] = useState("");
@@ -92,7 +91,7 @@ export default function ReplyPanel({
 
   function close() {
     if (sending) return;
-    setOpen(false);
+    if (!inline) setOpen(false);
     setPendingSchedule(null);
     setError(null);
     if (done) {
@@ -142,7 +141,8 @@ export default function ReplyPanel({
   const real = (messages ?? []).filter((m) => !isTrackingNotification(m.fromAddress));
   const lastInbound = [...real].reverse().find((m) => m.direction === "IN");
   const replyTo = lastInbound?.fromAddress ?? real.at(-1)?.toAddresses ?? "";
-  const shown = showAll ? real : lastInbound ? [lastInbound] : real.slice(-1);
+  // On the thread page their latest reply is already shown in full above the composer.
+  const shown = showAll ? real : inline ? [] : lastInbound ? [lastInbound] : real.slice(-1);
   const empty = !html.replace(/<[^>]*>/g, "").trim() && attachments.length === 0;
   const tooBig = totalBytes > MAX_TOTAL_BYTES;
   const accent = workspace === "brands" ? "var(--brands-accent)" : "var(--influencers-accent)";
@@ -154,24 +154,40 @@ export default function ReplyPanel({
     setHtml((prev) => `${prev}${prev.replace(/<[^>]*>/g, "").trim() ? "<br><br>" : ""}Here is our creator roster: <a href="${rosterUrl}">${rosterUrl}</a>`);
   }
 
+  // The same composer either sits on the page or opens over it.
+  const frame = (content: ReactNode) =>
+    inline ? (
+      <div id="reply" className="card flex flex-col scroll-mt-24">
+        {content}
+      </div>
+    ) : (
+      <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6 text-left">
+        <div className="absolute inset-0 bg-black/50" onClick={close} />
+        <div className="relative card w-full sm:max-w-2xl max-h-[94vh] flex flex-col" style={{ boxShadow: "var(--shadow-pop)" }} role="dialog" aria-label={`Reply to ${name}`}>
+          {content}
+        </div>
+      </div>
+    );
+
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className={
-          variant === "primary"
-            ? "btn-primary inline-flex items-center gap-1.5 px-3.5 py-2 text-sm"
-            : "btn-secondary inline-flex items-center gap-1 px-2.5 py-1 text-xs whitespace-nowrap"
-        }
-        title={`Reply to ${name} in the same email thread`}
-      >
-        <Reply size={variant === "primary" ? 15 : 12} /> Reply
-      </button>
+      {!inline && (
+        <button
+          onClick={() => setOpen(true)}
+          className={
+            variant === "primary"
+              ? "btn-primary inline-flex items-center gap-1.5 px-3.5 py-2 text-sm"
+              : "btn-secondary inline-flex items-center gap-1 px-2.5 py-1 text-xs whitespace-nowrap"
+          }
+          title={`Reply to ${name} in the same email thread`}
+        >
+          <Reply size={variant === "primary" ? 15 : 12} /> Reply
+        </button>
+      )}
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6 text-left">
-          <div className="absolute inset-0 bg-black/50" onClick={close} />
-          <div className="relative card w-full sm:max-w-2xl max-h-[94vh] flex flex-col" style={{ boxShadow: "var(--shadow-pop)" }} role="dialog" aria-label={`Reply to ${name}`}>
+      {open &&
+        frame(
+          <>
             <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-[var(--border)]">
               <div className="min-w-0">
                 <h2 className="font-semibold text-[15px] text-[var(--ink)] truncate">Reply to {name}</h2>
@@ -185,20 +201,22 @@ export default function ReplyPanel({
                   )}
                 </p>
               </div>
-              <button onClick={close} disabled={sending} className="p-1.5 rounded text-[var(--muted)] hover:text-[var(--ink)] disabled:opacity-40" aria-label="Close">
-                <X size={16} />
-              </button>
+              {!inline && (
+                <button onClick={close} disabled={sending} className="p-1.5 rounded text-[var(--muted)] hover:text-[var(--ink)] disabled:opacity-40" aria-label="Close">
+                  <X size={16} />
+                </button>
+              )}
             </div>
 
             {done ? (
-              <div className="px-5 py-8">
+              <div className={inline ? "px-5 py-5" : "px-5 py-8"}>
                 <div className="flex items-start gap-2 rounded-xl p-3.5 text-sm" style={{ background: "var(--success-bg)", color: "var(--success-fg)" }}>
                   <CircleCheck size={16} className="shrink-0 mt-0.5" />
                   <span>{done}</span>
                 </div>
                 <div className="mt-5 flex justify-end">
-                  <button onClick={close} className="btn-primary px-4 py-2 text-sm">
-                    Done
+                  <button onClick={close} className={inline ? "btn-secondary px-4 py-2 text-sm" : "btn-primary px-4 py-2 text-sm"}>
+                    {inline ? "Write another reply" : "Done"}
                   </button>
                 </div>
               </div>
@@ -222,9 +240,13 @@ export default function ReplyPanel({
                           </pre>
                         </div>
                       ))}
-                      {real.length > 1 && (
+                      {real.length > (inline ? 0 : 1) && (
                         <button onClick={() => setShowAll(!showAll)} className="text-xs font-medium" style={{ color: "var(--brand-teal-dark)" }}>
-                          {showAll ? "Show only their last message" : `Show the whole conversation (${real.length} emails)`}
+                          {showAll
+                            ? inline
+                              ? "Hide the conversation"
+                              : "Show only their last message"
+                            : `Show the whole conversation (${real.length} ${real.length === 1 ? "email" : "emails"})`}
                         </button>
                       )}
                     </div>
@@ -234,7 +256,7 @@ export default function ReplyPanel({
                     <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="Cc — comma-separated addresses" className="input py-1.5 text-[13px]" aria-label="Cc" />
                   )}
 
-                  <RichTextEditor value={html} onChange={setHtml} placeholder="Write your reply…" minHeight={150} autoFocus />
+                  <RichTextEditor value={html} onChange={setHtml} placeholder="Write your reply…" minHeight={inline ? 130 : 150} autoFocus={!inline} />
                   <AttachmentList attachments={attachments} totalBytes={totalBytes} onRemove={removeAt} />
 
                   <div className="rounded-xl p-3 space-y-2" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
@@ -308,15 +330,16 @@ export default function ReplyPanel({
                       Cc
                     </button>
                   )}
-                  <button onClick={close} disabled={sending} className="btn-secondary px-4 py-2 text-sm ml-auto">
-                    Cancel
-                  </button>
+                  {!inline && (
+                    <button onClick={close} disabled={sending} className="btn-secondary px-4 py-2 text-sm ml-auto">
+                      Cancel
+                    </button>
+                  )}
                 </div>
               </>
             )}
-          </div>
-        </div>
-      )}
+          </>
+        )}
     </>
   );
 }

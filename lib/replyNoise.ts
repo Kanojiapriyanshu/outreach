@@ -13,6 +13,14 @@ export function isGmailReaction(text: string | null | undefined): boolean {
   return REACTION_MARKERS.some((p) => p.test(text));
 }
 
+/** The part of a message written now, without the quoted chain underneath. */
+export function withoutQuote(body: string): string {
+  const cut = [/^On .{0,120}wrote:\s*$/im, /^-{2,}\s*Original Message\s*-{2,}$/im, /^\s*>/m]
+    .map((p) => body.match(p)?.index ?? body.length)
+    .reduce((a, b) => Math.min(a, b), body.length);
+  return body.slice(0, cut).trim() || body.trim();
+}
+
 /** A snippet short enough to be a reaction notice and mentioning Gmail — worth reading the body to
  * check for the campaign tag, which localized notices carry even when their wording isn't known. */
 export function mightBeGmailReaction(snippet: string): boolean {
